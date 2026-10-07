@@ -1,17 +1,27 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { CoreState } from '../../state/coreMachine';
+import { CoreState, Privilege } from '../../state/coreMachine';
 import { useVoicePulse } from '../../hooks/useVoicePulse';
 
-interface Props {
+export interface TheCoreProps {
   state: CoreState;
-  isAdmin: boolean;
+  privilege?: Privilege;
+  isAdmin?: boolean;
+  position?: { x: number; y: number };
+  target?: { x: number; y: number };
+  size?: number;
+  onFlyComplete?: () => void;
 }
 
-export const TheCore: React.FC<Props> = ({ state, isAdmin }) => {
-  let coreColor = isAdmin ? '#FACC15' : '#00F0FF';
-  if (state === 'quarantine') coreColor = '#F59E0B'; // Vàng hổ phách cảnh báo
-  if (state === 'time_rewind') coreColor = '#A855F7'; // Tím thời gian hoàn tác
+export const TheCore: React.FC<TheCoreProps> = ({ 
+  state, 
+  privilege = 'standard', 
+  isAdmin = false 
+}) => {
+  const isHighPerm = isAdmin || privilege === 'admin' || privilege === 'elevated';
+  let coreColor = isHighPerm ? '#FACC15' : '#00F0FF';
+  if (state === 'quarantine') coreColor = '#F59E0B';
+  if (state === 'time_rewind') coreColor = '#A855F7';
 
   const audioPulse = useVoicePulse(state === 'listening');
 
@@ -28,7 +38,6 @@ export const TheCore: React.FC<Props> = ({ state, isAdmin }) => {
 
   return (
     <div className="relative flex items-center justify-center w-32 h-32">
-      {/* Vòng quét mã nhị phân khi Quarantine */}
       {state === 'quarantine' && (
         <motion.div 
           animate={{ rotate: 360 }}
@@ -37,7 +46,6 @@ export const TheCore: React.FC<Props> = ({ state, isAdmin }) => {
         />
       )}
 
-      {/* Hiệu ứng hạt bị hút ngược khi Time Rewind */}
       {state === 'time_rewind' && (
         <motion.div 
           initial={{ scale: 2, opacity: 1 }}
@@ -80,3 +88,5 @@ export const TheCore: React.FC<Props> = ({ state, isAdmin }) => {
     </div>
   );
 };
+
+export { CoreState };
