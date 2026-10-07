@@ -17,6 +17,8 @@ xcap = "0.3.3"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Win32 thô (idle time, elevation). Cùng repo windows-rs, nhưng binding không đổi theo phiên bản.
 [target.'cfg(windows)'.dependencies]

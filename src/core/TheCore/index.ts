@@ -1,2 +1,2 @@
 export * from './TheCore';
-export type { CoreState, Privilege } from '../../state/coreMachine';
+export type { CoreState, Privilege, Point } from '../../state/coreMachine';

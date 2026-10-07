@@ -1,7 +1,8 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { TheCore, type Privilege } from "@/core/TheCore";
+import { TheCore } from "@/core/TheCore";
+import { CoreMover } from "@/core/TheCore/CoreMover";
 import { coreReducer, initialCoreModel } from "@/state/coreMachine";
 import {
   centerOf,
@@ -15,11 +16,11 @@ import {
 import { commands } from "@/ipc/commands";
 import { events } from "@/ipc/events";
 
-const CORE_SIZE = 32;
+/** TheCore render trong ô 128×128 (w-32 h-32); toạ độ trong overlay là góc trên-trái của ô này. */
+const CORE_BOX = 128;
 
 export function OverlayApp() {
   const [model, dispatch] = useReducer(coreReducer, initialCoreModel);
-  const [privilege, setPrivilege] = useState<Privilege>("user");
 
   // Handler event nằm trong effect chạy một lần, nên đọc state mới nhất qua ref.
   const modelRef = useRef(model);
@@ -37,7 +38,7 @@ export function OverlayApp() {
         ]);
         if (cancelled) return;
         monitorsRef.current = toCssMonitors(layout.monitors, window.devicePixelRatio);
-        setPrivilege(sys.isAdmin ? "admin" : "user");
+        dispatch({ type: "SET_PRIVILEGE", privilege: sys.isAdmin ? "admin" : "standard" });
       } catch (err) {
         console.error("[orbis] không nạp được layout/quyền:", err);
       }
@@ -62,21 +63,21 @@ export function OverlayApp() {
       events.onWake(() => {
         const primary = pickPrimary(monitors());
         dispatch({
-          type: "toggle",
-          dock: dockOf(primary, CORE_SIZE),
-          home: centerOf(primary, CORE_SIZE),
+          type: "TOGGLE",
+          dock: dockOf(primary, CORE_BOX),
+          home: centerOf(primary, CORE_BOX),
         });
       }),
     );
 
     track(
       events.onDemo(({ action }) => {
-        if (action === "think") dispatch({ type: "think" });
-        else if (action === "idle") dispatch({ type: "idle" });
+        if (action === "think") dispatch({ type: "THINK" });
+        else if (action === "idle") dispatch({ type: "IDLE" });
         else {
           dispatch({
-            type: "flyTo",
-            target: nextFlightTarget(modelRef.current.position, monitors(), CORE_SIZE),
+            type: "FLY_TO",
+            target: nextFlightTarget(modelRef.current.position, monitors(), CORE_BOX),
           });
         }
       }),
@@ -88,11 +89,13 @@ export function OverlayApp() {
     };
   }, []);
 
+  const awake = model.state !== "sleeping";
+
   return (
     <div className="fixed inset-0 overflow-hidden">
       {/* Ngủ = unmount hẳn: không còn animation nào chạy, overlay 0% GPU. */}
       <AnimatePresence>
-        {model.awake && (
+        {awake && (
           <motion.div
             key="core-layer"
             className="absolute inset-0"
@@ -101,14 +104,14 @@ export function OverlayApp() {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.25 }}
           >
-            <TheCore
-              state={model.state}
-              privilege={privilege}
+            <CoreMover
               position={model.position}
               target={model.target}
-              size={CORE_SIZE}
-              onFlyComplete={() => dispatch({ type: "landed" })}
-            />
+              flying={model.state === "sonic_flying"}
+              onFlyComplete={() => dispatch({ type: "LANDED" })}
+            >
+              <TheCore state={model.state} privilege={model.privilege} />
+            </CoreMover>
           </motion.div>
         )}
       </AnimatePresence>
