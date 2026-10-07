@@ -9,22 +9,44 @@ interface Props {
 }
 
 export const TheCore: React.FC<Props> = ({ state, isAdmin }) => {
-  const coreColor = isAdmin ? '#FACC15' : '#00F0FF'; // Vàng Admin vs Xanh User
+  let coreColor = isAdmin ? '#FACC15' : '#00F0FF';
+  if (state === 'quarantine') coreColor = '#F59E0B'; // Vàng hổ phách cảnh báo
+  if (state === 'time_rewind') coreColor = '#A855F7'; // Tím thời gian hoàn tác
+
   const audioPulse = useVoicePulse(state === 'listening');
 
-  // Khai báo các trạng thái chuyển động (Framer Motion Variants)
   const variants = {
     idle: { scale: 1, borderRadius: '50%', x: 0 },
-    docked: { scale: 0.8, borderRadius: '10px 50% 50% 10px', x: -20 }, // Bán cầu sát mép
-    listening: { scale: 1 + audioPulse * 0.3, borderRadius: '40%', opacity: 0.9 }, // Biến thiên theo giọng
-    thinking: { scale: 0.9, rotate: 360, transition: { repeat: Infinity, duration: 2 } },
+    docked: { scale: 0.8, borderRadius: '10px 50% 50% 10px', x: -20 },
+    listening: { scale: 1 + audioPulse * 0.3, borderRadius: '40%', opacity: 0.9 },
+    thinking: { scale: 0.9, rotate: 360, transition: { repeat: Infinity, duration: 2, ease: "linear" } },
     glitched: { x: [-10, 10, -10, 10, 0], filter: 'hue-rotate(90deg)', transition: { duration: 0.2 } },
-    shielded: { scale: 1.2, boxShadow: `0 0 20px ${coreColor}, inset 0 0 10px #fff` }
+    shielded: { scale: 1.2, boxShadow: `0 0 20px ${coreColor}, inset 0 0 10px #fff` },
+    quarantine: { scale: 1.15, filter: 'drop-shadow(0 0 25px #F59E0B)', transition: { yoyo: Infinity, duration: 0.8 } },
+    time_rewind: { rotate: -720, scale: [1, 0.7, 1.1, 1], transition: { duration: 1.2, ease: "easeInOut" } }
   };
 
   return (
     <div className="relative flex items-center justify-center w-32 h-32">
-      {/* Vòng Shield nếu đang tương tác vùng nhạy cảm */}
+      {/* Vòng quét mã nhị phân khi Quarantine */}
+      {state === 'quarantine' && (
+        <motion.div 
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 3, ease: "linear" }}
+          className="absolute w-28 h-28 border-2 border-dashed border-amber-500 rounded-full opacity-70"
+        />
+      )}
+
+      {/* Hiệu ứng hạt bị hút ngược khi Time Rewind */}
+      {state === 'time_rewind' && (
+        <motion.div 
+          initial={{ scale: 2, opacity: 1 }}
+          animate={{ scale: 0.2, opacity: 0 }}
+          transition={{ repeat: Infinity, duration: 0.6 }}
+          className="absolute w-20 h-20 border-2 border-purple-400 rounded-full"
+        />
+      )}
+
       {state === 'shielded' && (
         <motion.div 
           initial={{ opacity: 0, scale: 0 }}
@@ -33,7 +55,6 @@ export const TheCore: React.FC<Props> = ({ state, isAdmin }) => {
         />
       )}
 
-      {/* Vệ tinh xoay khi Thinking */}
       {state === 'thinking' && (
         <motion.div
           animate={{ rotate: 360 }}
@@ -42,7 +63,6 @@ export const TheCore: React.FC<Props> = ({ state, isAdmin }) => {
         />
       )}
 
-      {/* The Core Entity */}
       <motion.div
         variants={variants}
         initial="idle"

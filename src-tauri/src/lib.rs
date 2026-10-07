@@ -12,7 +12,8 @@ pub fn run() {
             os::sandbox::start_sandbox_vm,
             os::sandbox::create_sandbox_checkpoint,
             os::sandbox::rollback_sandbox_checkpoint,
-            os::sandbox::exec_in_sandbox
+            os::sandbox::exec_in_sandbox,
+            os::sandbox::place_vm_on_secondary_screen
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

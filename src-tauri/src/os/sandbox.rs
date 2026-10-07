@@ -40,6 +40,45 @@ pub fn exec_in_sandbox(guest_cmd: String) -> Result<String, String> {
     run_powershell(&script)
 }
 
+/// Phát hiện màn hình phụ và di chuyển cửa sổ kết nối VM (vmconnect) sang đó
+#[tauri::command]
+pub fn place_vm_on_secondary_screen() -> Result<String, String> {
+    let script = r#"
+Add-Type @"
+  using System;
+  using System.Runtime.InteropServices;
+  public class WinHelper {
+    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  }
+"@
+Add-Type -AssemblyName System.Windows.Forms
+
+$screens = [System.Windows.Forms.Screen]::AllScreens
+if ($screens.Count -gt 1) {
+    # Lấy màn hình không phải Primary
+    $targetScreen = $screens \vert{} Where-Object { -not$_.Primary } | Select-Object -First 1
+    
+    # Mở cửa sổ kết nối VM nếu chưa mở
+    Start-Process vmconnect.exe -ArgumentList "localhost", "Orbis-DetonationLab"
+    Start-Sleep -Milliseconds 1200
+    
+    $proc = Get-Process vmconnect -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($proc -and$proc.MainWindowHandle -ne [IntPtr]::Zero) {
+        $bounds =$targetScreen.WorkingArea
+        [WinHelper]::MoveWindow($proc.MainWindowHandle, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height, $true)
+        [WinHelper]::ShowWindow($proc.MainWindowHandle, 3) # SW_MAXIMIZE
+        return "Moved VM window to secondary display."
+    }
+} else {
+    # Chỉ có 1 màn hình: Mở kết nối bình thường
+    Start-Process vmconnect.exe -ArgumentList "localhost", "Orbis-DetonationLab"
+}
+return "Single monitor mode active."
+"#;
+    run_powershell(script)
+}
+
 fn run_powershell(script: &str) -> Result<String, String> {
     let output = Command::new("powershell")
         .args(&["-NoProfile", "-NonInteractive", "-Command", script])
