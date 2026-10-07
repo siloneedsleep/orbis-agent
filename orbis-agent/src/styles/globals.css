@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/* Overlay phải trong suốt tuyệt đối, không scrollbar, không bôi đen. */
+html.overlay,
+html.overlay body {
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
