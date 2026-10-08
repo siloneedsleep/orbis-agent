@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub const LABEL: &str = "overlay";
 
@@ -27,8 +27,8 @@ pub struct OverlayLayout {
 }
 
 /// Tính toán bounding box bao phủ toàn bộ các màn hình hiện có.
-pub fn compute_layout(app: &AppHandle) -> Result<OverlayLayout, String> {
-    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+pub fn compute_layout(window: &WebviewWindow) -> Result<OverlayLayout, String> {
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Ok(OverlayLayout {
             origin_x: 0,
@@ -53,7 +53,7 @@ pub fn compute_layout(app: &AppHandle) -> Result<OverlayLayout, String> {
         max_y = max_y.max(pos.y + size.height as i32);
     }
 
-    let primary_monitor = app.primary_monitor().ok().flatten();
+    let primary_monitor = window.primary_monitor().ok().flatten();
     let primary_name = primary_monitor.and_then(|m| m.name().cloned());
 
     let monitor_infos = monitors
