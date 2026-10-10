@@ -1,4 +1,4 @@
-# Đóng góp cho Orbis Agent / Contributing to Orbis Agent
+# Quy tắc ứng xử / Code of Conduct
 
 **Ngôn ngữ / Language:** [Tiếng Việt](#vietnamese) | [English](#english)
 
@@ -6,170 +6,98 @@
 
 ## <a id="vietnamese">Tiếng Việt</a>
 
-Cảm ơn bạn đã muốn đóng góp cho dự án Orbis Agent.
+Tất cả người đóng góp và thành viên trong cộng đồng Orbis Agent đều được kỳ vọng tuân thủ quy tắc ứng xử dưới đây.
 
-### Mục tiêu dự án
+### Mục tiêu
 
-Orbis Agent là ứng dụng desktop Tauri + React + Rust, tập trung vào trải nghiệm overlay, tray, hotkey và các chức năng tự động hỗ trợ người dùng trên Windows.
+Chúng ta muốn xây dựng một môi trường:
 
-### Quy trình đóng góp
+- Tôn trọng
+- Chào đón
+- An toàn
+- Hữu ích
+- Công bằng
 
-#### 1. Fork và tạo nhánh
+### Chúng ta kỳ vọng
 
-- Fork repository về tài khoản cá nhân.
-- Tạo nhánh mới theo mô tả rõ ràng, ví dụ: `feature/overlay-hotkey` hoặc `fix/tray-state`.
+- Tôn trọng ý kiến, kinh nghiệm và quan điểm của người khác.
+- Sử dụng ngôn ngữ lịch sự, xây dựng và phù hợp với môi trường kỹ thuật.
+- Tập trung vào cải tiến dự án thay vì tấn công cá nhân.
+- Chấp nhận phản hồi mang tính xây dựng.
+- Hỗ trợ người khác một cách tích cực và professional.
 
-#### 2. Thiết lập môi trường
+### Chúng ta không chấp nhận
 
-Yêu cầu:
+- Hành vi quấy rối, đe dọa hoặc phân biệt đối xử.
+- Ngôn ngữ xúc phạm, miệt thị, tấn công cá nhân hoặc bạo lực.
+- Thả thính, đánh lừa, quấy rối hoặc gây khó chịu trong quá trình cộng tác.
+- Chia sẻ thông tin nhạy cảm hoặc nội dung không phù hợp.
+- Hành vi lạm dụng quyền lực, thương lượng bằng áp lực hoặc phá hoại tiến độ.
 
-- Node.js 20+
-- Rust stable
-- Toolchain MSVC trên Windows
-- WebView2 runtime
+### Báo cáo
 
-Cài đặt:
+Nếu bạn gặp phải hoặc chứng kiến hành vi không phù hợp, vui lòng báo cáo cho maintainer hoặc quản trị viên repo. Chúng tôi sẽ xem xét và xử lý theo mức độ nghiêm trọng. Nếu cần hỗ trợ nhanh, bạn có thể gửi email tới nimborasupport@gmail.com.
 
-```bash
-npm install
-npm run tauri dev
-```
+### Hậu quả
 
-#### 3. Viết code
+Hành vi vi phạm có thể dẫn đến:
 
-- Giữ patch nhỏ, rõ mục tiêu và dễ review.
-- Thêm hoặc cập nhật test nếu có liên quan.
-- Không commit dữ liệu nhạy cảm hoặc secret.
-- Hạn chế thay đổi không liên quan trong cùng PR.
+- Nhắc nhở công khai hoặc riêng tư
+- Cấm tham gia một thời gian
+- Chặn quyền truy cập vào repository hoặc diễn đàn liên quan
 
-#### 4. Kiểm tra trước khi tạo PR
+### Cam kết
 
-Trước khi mở pull request, hãy đảm bảo:
+Mọi thành viên đều có trách nhiệm duy trì môi trường an toàn và tôn trọng cho cộng đồng.
 
-- Build hoặc chạy app thành công.
-- Không có lỗi TypeScript lớn.
-- Không có log debug nhạy cảm hoặc tạm thời chưa xóa.
-- Mô tả thay đổi rõ ràng trong PR.
-
-#### 5. Tạo Pull Request
-
-Mô tả PR nên bao gồm:
-
-- Vấn đề cần giải quyết
-- Mục tiêu thay đổi
-- Các file chính đã sửa
-- Nếu có, ảnh chụp hoặc video demo
-
-### Quy tắc chất lượng
-
-- Tôn trọng cấu trúc dự án hiện có.
-- Tránh sửa code không cần thiết trong cùng một PR.
-- Nếu thay đổi hành vi người dùng hoặc UX, nên giải thích rõ trong mô tả.
-- Ưu tiên sự rõ ràng, dễ đọc và dễ bảo trì.
-
-### Báo cáo lỗi
-
-Nếu phát hiện lỗi, vui lòng mở issue với mô tả:
-
-- Môi trường (Windows version, laptop/desktop, cấu hình monitor)
-- Bước tái hiện
-- Kết quả mong đợi và thực tế
-- Log hoặc screenshot nếu cần
-
-### Hợp tác
-
-Chúng tôi hoan nghênh các đóng góp về:
-
-- Cải thiện UX
-- Sửa lỗi
-- Tối ưu hiệu năng
-- Bảo mật và độ tin cậy
-- Làm rõ tài liệu
-
-Cảm ơn bạn đã góp phần xây dựng Orbis Agent.
+Chúng tôi tin rằng một cộng đồng kỹ thuật lành mạnh bắt đầu từ cách mỗi người cư xử với nhau.
 
 ---
 
 ## <a id="english">English</a>
 
-Thank you for wanting to contribute to the Orbis Agent project.
+All contributors and members of the Orbis Agent community are expected to adhere to the code of conduct below.
 
-### Project Objectives
+### Objectives
 
-Orbis Agent is a Tauri + React + Rust desktop application focused on delivering a superior overlay, tray, hotkey, and automation feature experience to support users on Windows.
+We want to build an environment that is:
 
-### Contributing Process
+- Respectful
+- Welcoming
+- Safe
+- Helpful
+- Fair
 
-#### 1. Fork and Create a Branch
+### What We Expect
 
-- Fork the repository to your personal account.
-- Create a new branch with a clear description, for example: `feature/overlay-hotkey` or `fix/tray-state`.
+- Respect the opinions, experiences, and perspectives of others.
+- Use polite, constructive language appropriate to a technical environment.
+- Focus on improving the project rather than personal attacks.
+- Accept constructive feedback.
+- Support others in a positive and professional manner.
 
-#### 2. Set Up Your Environment
+### What We Do Not Accept
 
-Requirements:
+- Harassment, threats, or discrimination.
+- Offensive language, disdain, personal attacks, or violence.
+- Unwanted advances, deception, harassment, or annoyance during collaboration.
+- Sharing sensitive information or inappropriate content.
+- Abuse of power, coercion through pressure, or disruption of progress.
 
-- Node.js 20+
-- Rust stable
-- MSVC toolchain on Windows
-- WebView2 runtime
+### Reporting
 
-Installation:
+If you encounter or witness inappropriate behavior, please report it to a maintainer or repository administrator. We will review and address it according to its severity. For faster support, you may email nimborasupport@gmail.com.
 
-```bash
-npm install
-npm run tauri dev
-```
+### Consequences
 
-#### 3. Write Code
+Violations of this code of conduct may result in:
 
-- Keep patches small, targeted, and easy to review.
-- Add or update tests if relevant.
-- Do not commit sensitive data or secrets.
-- Limit unrelated changes in a single PR.
+- Public or private reminders
+- Temporary ban from participation
+- Revocation of access to the repository or related forums
 
-#### 4. Verify Before Creating a PR
+### Commitment
 
-Before opening a pull request, make sure:
+Every member has a responsibility to maintain a safe and respectful environment for the community.
 
-- The app builds or runs successfully.
-- There are no major TypeScript errors.
-- There are no sensitive or temporary debug logs left behind.
-- Changes are clearly described in the PR.
-
-#### 5. Create a Pull Request
-
-Your PR description should include:
-
-- The problem being addressed
-- The goal of the changes
-- Main files that were modified
-- If applicable, screenshots or demo video
-
-### Quality Standards
-
-- Respect the existing project structure.
-- Avoid unnecessary code changes in a single PR.
-- If changes affect user behavior or UX, explain them clearly in the description.
-- Prioritize clarity, readability, and maintainability.
-
-### Bug Reporting
-
-If you find a bug, please open an issue with:
-
-- Environment details (Windows version, laptop/desktop, monitor configuration)
-- Steps to reproduce
-- Expected and actual results
-- Logs or screenshots if needed
-
-### What We Welcome
-
-We welcome contributions in:
-
-- UX improvements
-- Bug fixes
-- Performance optimization
-- Security and reliability
-- Documentation clarification
-
-Thank you for contributing to building Orbis Agent.
+We believe that a healthy technical community starts with how each person treats one another.

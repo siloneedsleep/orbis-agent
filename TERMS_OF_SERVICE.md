@@ -1,4 +1,4 @@
-# Điều khoản Sử dụng / Terms of Service
+# Giấy phép / License
 
 **Ngôn ngữ / Language:** [Tiếng Việt](#vietnamese) | [English](#english)
 
@@ -6,112 +6,50 @@
 
 ## <a id="vietnamese">Tiếng Việt</a>
 
-### Điều khoản Sử dụng Orbis Agent
+### MIT License
 
-Bằng cách sử dụng Orbis Agent, bạn đồng ý tuân thủ các điều khoản này.
+Orbis Agent được phát hành dưới giấy phép MIT. Đây là một giấy phép mã nguồn mở cho phép:
 
-### 1. Quyền Sử dụng
+- Sử dụng cho mục đích thương mại
+- Sửa đổi mã
+- Phân phối mã
+- Sử dụng riêng tư
 
-Orbis Agent được cấp phép cho bạn để sử dụng cá nhân và không thương mại, tuân thủ các điều khoản này.
+Dưới các điều kiện sau:
 
-### 2. Hạn chế
+- Ghi nhận tác giả và nguồn gốc
+- Kèm bản sao của giấy phép MIT
 
-Bạn không được phép:
+### Từ chối trách nhiệm
 
-- Sao chép, sửa đổi hoặc tạo các bản phái sinh của phần mềm mà không có sự cho phép
-- Bán lại, chuyển nhượng hoặc cấp giấy phép lại phần mềm
-- Sử dụng phần mềm cho bất kỳ mục đích bất hợp pháp nào
-- Khai thác lỗ hổng hoặc lỗi bảo mật mà không báo cáo
-- Reverse-engineer hoặc decompile mã
+Phần mềm này được cung cấp "AS IS" (như có) mà không có bất kỳ bảo hành nào, trừ khi được quy định bởi luật pháp. Tác giả không chịu trách nhiệm cho bất kỳ thiệt hại nào phát sinh từ việc sử dụng phần mềm này.
 
-### 3. Dữ liệu Người Dùng
+### Liên hệ
 
-- Dữ liệu của bạn được lưu cục bộ trên máy tính của bạn
-- Chúng tôi không lưu trữ dữ liệu cá nhân trên máy chủ ngoài (trừ khi được bạn yêu cầu)
-- Bạn chịu trách nhiệm bảo vệ dữ liệu của mình
-
-### 4. Miễn trừ Trách nhiệm
-
-Orbis Agent được cung cấp "AS IS" mà không bảo hành. Chúng tôi không chịu trách nhiệm cho:
-
-- Mất dữ liệu
-- Gián đoạn dịch vụ
-- Các vấn đề tương thích với hệ thống
-- Bất kỳ thiệt hại gián tiếp hay ngẫu nhiên nào
-
-### 5. Giới hạn Trách nhiệm
-
-Chúng tôi không chịu trách nhiệm cho bất kỳ thiệt hại nào vượt quá giá trị của phần mềm.
-
-### 6. Thay đổi Điều khoản
-
-Chúng tôi có quyền sửa đổi các điều khoản này bất kỳ lúc nào. Sử dụng tiếp tục phần mềm sau khi thay đổi có nghĩa là bạn đồng ý với các điều khoản mới.
-
-### 7. Chấm dứt
-
-Chúng tôi có thể chấm dứt quyền sử dụng của bạn nếu bạn vi phạm các điều khoản này.
-
-### 8. Pháp luật
-
-Các điều khoản này được điều chỉnh bởi luật pháp hiện hành.
-
-### 9. Liên hệ
-
-Nếu bạn có câu hỏi về các điều khoản này, vui lòng liên hệ qua kênh hỗ trợ của repository.
+Nếu bạn có thắc mắc về giấy phép hoặc cần hỗ trợ, vui lòng liên hệ qua email: nimborasupport@gmail.com.
 
 ---
 
 ## <a id="english">English</a>
 
-### Terms of Service for Orbis Agent
+### MIT License
 
-By using Orbis Agent, you agree to comply with these terms.
+Orbis Agent is released under the MIT License. This is an open-source license that permits:
 
-### 1. Grant of Use
+- Commercial use
+- Modification of code
+- Distribution of code
+- Private use
 
-Orbis Agent is licensed to you for personal and non-commercial use, subject to these terms.
+Under the following conditions:
 
-### 2. Restrictions
+- Attribution of the author and source
+- Inclusion of a copy of the MIT License
 
-You may not:
+### Disclaimer
 
-- Copy, modify, or create derivatives of the software without permission
-- Resell, transfer, or relicense the software
-- Use the software for any illegal purpose
-- Exploit vulnerabilities or security flaws without reporting them
-- Reverse-engineer or decompile the code
+This software is provided "AS IS" without any warranty, except as provided by law. The author is not liable for any damages arising from the use of this software.
 
-### 3. User Data
+### Contact
 
-- Your data is stored locally on your computer
-- We do not store personal data on external servers (unless you request it)
-- You are responsible for protecting your data
-
-### 4. Disclaimer of Warranties
-
-Orbis Agent is provided "AS IS" without any warranty. We are not liable for:
-
-- Data loss
-- Service interruption
-- System compatibility issues
-- Any indirect or consequential damages
-
-### 5. Limitation of Liability
-
-We are not liable for any damages exceeding the value of the software.
-
-### 6. Changes to Terms
-
-We reserve the right to modify these terms at any time. Continued use of the software after changes means you agree to the new terms.
-
-### 7. Termination
-
-We may terminate your rights to use the software if you violate these terms.
-
-### 8. Governing Law
-
-These terms are governed by applicable law.
-
-### 9. Contact
-
-If you have questions about these terms, please contact us through the repository's support channel.
+If you have questions about the license or need support, please contact us at nimborasupport@gmail.com.
