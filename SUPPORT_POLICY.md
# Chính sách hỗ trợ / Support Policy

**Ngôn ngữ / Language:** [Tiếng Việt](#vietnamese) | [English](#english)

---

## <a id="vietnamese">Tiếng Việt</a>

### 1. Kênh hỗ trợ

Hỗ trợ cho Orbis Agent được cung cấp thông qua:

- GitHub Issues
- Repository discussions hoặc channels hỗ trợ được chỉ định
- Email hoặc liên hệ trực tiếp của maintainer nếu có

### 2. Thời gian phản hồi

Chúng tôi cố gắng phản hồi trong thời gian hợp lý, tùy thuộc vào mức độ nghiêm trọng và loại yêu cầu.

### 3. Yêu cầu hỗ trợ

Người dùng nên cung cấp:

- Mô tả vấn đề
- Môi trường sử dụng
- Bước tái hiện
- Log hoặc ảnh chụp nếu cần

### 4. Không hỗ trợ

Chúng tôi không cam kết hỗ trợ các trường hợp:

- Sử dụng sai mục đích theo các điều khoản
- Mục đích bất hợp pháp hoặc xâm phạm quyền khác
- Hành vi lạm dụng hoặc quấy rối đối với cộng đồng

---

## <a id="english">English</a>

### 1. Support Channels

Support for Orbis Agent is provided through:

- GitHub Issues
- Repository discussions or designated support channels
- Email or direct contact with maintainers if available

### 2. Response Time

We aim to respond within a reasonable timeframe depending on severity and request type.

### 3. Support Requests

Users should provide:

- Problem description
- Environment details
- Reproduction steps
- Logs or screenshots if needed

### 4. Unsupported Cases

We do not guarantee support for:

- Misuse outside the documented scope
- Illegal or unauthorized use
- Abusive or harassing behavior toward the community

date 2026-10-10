@@ -1,0 +1,67 @@
+# Chính sách báo cáo lỗ hổng / Vulnerability Disclosure Policy
+
+**Ngôn ngữ / Language:** [Tiếng Việt](#vietnamese) | [English](#english)
+
+---
+
+## <a id="vietnamese">Tiếng Việt</a>
+
+### 1. Mục tiêu
+
+Chúng tôi hoan nghênh các báo cáo lỗ hổng an ninh từ cộng đồng để cải thiện độ an toàn cho sản phẩm.
+
+### 2. Cách báo cáo
+
+Vui lòng gửi báo cáo qua GitHub Security Advisories hoặc liên hệ maintainer theo kênh bảo mật được chỉ định.
+
+### 3. Thông tin cần cung cấp
+
+Báo cáo nên bao gồm:
+
+- Mô tả lỗ hổng
+- Bước tái hiện
+- Môi trường bị ảnh hưởng
+- Độ nghiêm trọng ước tính
+- Đề xuất khắc phục nếu có
+
+### 4. Nguyên tắc xử lý
+
+- Không công khai lỗ hổng trên issue công khai
+- Không thử khai thác hoặc làm gián đoạn hệ thống người dùng
+- Không chia sẻ dữ liệu nhạy cảm công khai
+
+### 5. Mức phản hồi
+
+Chúng tôi sẽ xem xét và phản hồi trong thời gian hợp lý. Nếu xác minh là hợp lệ, chúng tôi sẽ ưu tiên xử lý và phát hành bản vá phù hợp.
+
+---
+
+## <a id="english">English</a>
+
+### 1. Purpose
+
+We welcome security vulnerability reports from the community to improve product safety.
+
+### 2. Reporting Process
+
+Please report through GitHub Security Advisories or contact maintainers through the designated security channel.
+
+### 3. Information to Include
+
+Reports should include:
+
+- Description of the vulnerability
+- Reproduction steps
+- Environment affected
+- Estimated severity
+- Proposed remediation if available
+
+### 4. Handling Principles
+
+- Do not publicly disclose vulnerabilities on public issues
+- Do not exploit or disrupt user systems
+- Do not share sensitive data publicly
+
+### 5. Response Expectations
+
+We will review and respond within a reasonable time. If the report is valid, we will prioritize a fix and release a patch when appropriate.

@@ -1,0 +1,63 @@
+# Chính sách lưu giữ dữ liệu / Data Retention Policy
+
+**Ngôn ngữ / Language:** [Tiếng Việt](#vietnamese) | [English](#english)
+
+---
+
+## <a id="vietnamese">Tiếng Việt</a>
+
+### 1. Mục tiêu
+
+Orbis Agent ưu tiên lưu trữ dữ liệu ở môi trường cục bộ trên thiết bị người dùng để giảm rủi ro rò rỉ dữ liệu và nâng cao quyền kiểm soát của người dùng.
+
+### 2. Thời gian lưu giữ
+
+- Dữ liệu cấu hình thường được lưu trữ khi người dùng thực hiện thay đổi
+- Dữ liệu trạng thái ứng dụng được lưu theo nhu cầu sử dụng hoặc khi người dùng tạo tùy chỉnh
+- Dữ liệu không cần thiết sẽ bị xóa khi người dùng hủy kích hoạt tính năng hoặc dọn dẹp dữ liệu
+
+### 3. Không lưu trữ ngoài ý muốn
+
+Chúng tôi không lưu trữ dữ liệu người dùng trên máy chủ bên ngoài trừ khi:
+
+- Người dùng chủ động đồng ý
+- Tính năng yêu cầu tích hợp với dịch vụ bên ngoài
+- Có nghĩa vụ pháp lý hoặc báo cáo bảo mật cần thiết
+
+### 4. Xóa dữ liệu
+
+Người dùng có thể xóa dữ liệu đã lưu để dọn dẹp hoặc hủy kết nối với dịch vụ liên quan. Trong trường hợp có dịch vụ bên ngoài, dữ liệu sẽ được xử lý theo điều khoản riêng của từng dịch vụ.
+
+### 5. Thay đổi và cập nhật
+
+Chúng tôi có thể cập nhật chính sách lưu giữ dữ liệu khi tính năng mới được thêm vào hoặc khi thay đổi quy trình bảo mật.
+
+---
+
+## <a id="english">English</a>
+
+### 1. Purpose
+
+Orbis Agent prioritizes local storage of data on the user's device to reduce leakage risk and improve user control.
+
+### 2. Retention Period
+
+- Configuration data is typically retained when the user makes changes
+- Application state data is retained as needed for user workflows or personalization
+- Unnecessary data is removed when a feature is disabled or cleanup is performed
+
+### 3. No Unwanted External Storage
+
+We do not retain user data on external servers unless:
+
+- The user explicitly agrees
+- A feature requires integration with an external service
+- There is a legal or security necessity requiring retention
+
+### 4. Deletion of Data
+
+Users may delete saved data to clean up or disconnect from related services. In cases involving external services, data handling follows that service's terms.
+
+### 5. Updates
+
+We may update this data retention policy as new features are introduced or security processes change.
