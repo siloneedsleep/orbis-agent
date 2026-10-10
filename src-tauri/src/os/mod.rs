@@ -1,6 +1,11 @@
-pub mod idle;
-pub mod elevation;
-pub mod input;
 pub mod capture;
-pub mod sandbox;
+pub mod edit;
+pub mod elevation;
+pub mod fs;
+pub mod idle;
+pub mod input;
 pub mod ollama;
+pub mod repo_map;
+pub mod sandbox;
+pub mod shell;
+pub mod winver;

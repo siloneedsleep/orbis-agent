@@ -1,57 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** Toạ độ & kích thước theo physical px; x/y đã quy về gốc = góc trên-trái overlay. */
 export interface MonitorInfo {
   name: string | null;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  scale: number;
-  primary: boolean;
+  x: number; y: number; width: number; height: number;
+  scale: number; primary: boolean;
 }
-
 export interface OverlayLayout {
-  originX: number;
-  originY: number;
-  width: number;
-  height: number;
+  originX: number; originY: number; width: number; height: number;
   monitors: MonitorInfo[];
 }
-
 export interface SystemInfo {
-  isAdmin: boolean;
-  idleMs: number;
+  isAdmin: boolean; idleMs: number; windowsBuild: number; platform: string;
 }
-
 export interface OllamaMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-  /** Ảnh base64 (không có tiền tố data:) cho model vision. */
-  images?: string[];
+  role: "system" | "user" | "assistant"; content: string; images?: string[];
 }
-
-export interface OllamaReply {
-  model: string;
-  content: string;
-  /** false nếu cấu hình max lỗi (vd. hết VRAM) và đã tự lùi về mặc định của Ollama. */
-  maxPower: boolean;
-}
-
+export interface OllamaReply { model: string; content: string; maxPower: boolean; }
 export interface OllamaStatus {
   models: { name: string; sizeBytes: number }[];
-  /** Model sẽ được chọn khi model = "auto". */
-  largest: string | null;
-  threads: number;
-  ctxCap: number;
+  largest: string | null; threads: number; ctxCap: number;
 }
+export interface OllamaOptions { model?: string; maxPower?: boolean; }
 
-export interface OllamaOptions {
-  /** Bỏ trống hoặc "auto" = model lớn nhất đã cài. */
-  model?: string;
-  /** Mặc định true: full GPU, toàn bộ luồng CPU, keep_alive vô hạn. */
-  maxPower?: boolean;
-}
+export interface FsEntry { name: string; path: string; isDir: boolean; sizeBytes: number; }
+export interface ShellResult { stdout: string; stderr: string; exitCode: number; timedOut: boolean; }
+export interface RepoMapEntry { path: string; symbols: string[]; lines: number; }
+export interface EditBlockPayload { path: string; search: string; replace: string; }
+export interface ApplyResult { path: string; applied: boolean; diff: string; error: string | null; }
 
 export const commands = {
   getOverlayLayout: () => invoke<OverlayLayout>("get_overlay_layout"),
@@ -60,8 +35,21 @@ export const commands = {
   ollamaStatus: () => invoke<OllamaStatus>("ollama_status"),
   ollamaChat: (messages: OllamaMessage[], opts: OllamaOptions = {}) =>
     invoke<OllamaReply>("ollama_chat", {
-      messages,
-      model: opts.model ?? null,
-      maxPower: opts.maxPower ?? true,
+      messages, model: opts.model ?? null, maxPower: opts.maxPower ?? true,
     }),
-};
+  fsRead: (path: string) => invoke<string>("agent_fs_read", { path }),
+  fsWrite: (path: string, content: string) =>
+    invoke<void>("agent_fs_write", { path, content }),
+  fsExists: (path: string) => invoke<boolean>("agent_fs_exists", { path }),
+  fsList: (path: string) => invoke<FsEntry[]>("agent_fs_list", { path }),
+  shellExec: (cmd: string, cwd?: string, timeoutMs?: number) =>
+    invoke<ShellResult>("agent_shell_exec", {
+      cmd, cwd: cwd ?? null, timeoutMs: timeoutMs ?? null,
+    }),
+  buildRepoMap: (root: string, tokenBudget?: number) =>
+    invoke<RepoMapEntry[]>("agent_build_repo_map", {
+      root, tokenBudget: tokenBudget ?? null,
+    }),
+  applyEdits: (blocks: EditBlockPayload[], dryRun: boolean) =>
+    invoke<ApplyResult[]>("agent_apply_edits", { blocks, dryRun }),
+} as const;

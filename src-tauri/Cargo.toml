@@ -19,13 +19,19 @@ tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["process", "time", "io-util", "macros", "rt-multi-thread"] }
+walkdir = "2"
+regex = "1"
+once_cell = "1"
 
-# Win32 thô (idle time, elevation). Cùng repo windows-rs, nhưng binding không đổi theo phiên bản.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
   "Win32_System_SystemInformation",
+  "Win32_System_LibraryLoader",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [profile.release]
