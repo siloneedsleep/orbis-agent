@@ -1,4 +1,4 @@
-export async function validateApiKey(provider: "gemini" | "openai" | "claude", key: string) {
+export async function validateApiKey(provider: "gemini" | "openai" | "claude" | "deepseek", key: string) {
   const cleanKey = key.trim();
   if (!cleanKey) return { valid: false, error: "Vui lòng nhập key." };
 
@@ -10,6 +10,8 @@ export async function validateApiKey(provider: "gemini" | "openai" | "claude", k
       res = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${cleanKey}` } });
     } else if (provider === "claude") {
       res = await fetch("https://api.anthropic.com/v1/models", { headers: { "x-api-key": cleanKey, "anthropic-version": "2023-06-01" } });
+    } else if (provider === "deepseek") {
+      res = await fetch("https://api.deepseek.com/models", { headers: { Authorization: `Bearer ${cleanKey}` } });
     } else return { valid: false, error: "Provider không hỗ trợ" };
 
     if (res.status === 200) return { valid: true };

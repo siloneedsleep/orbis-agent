@@ -73,4 +73,9 @@ export const commands = {
       model: opts.model ?? null,
       maxPower: opts.maxPower ?? true,
     }),
+  startSandboxVm: () => invoke<string>("start_sandbox_vm"),
+  createSandboxCheckpoint: (snapshotName: string) => invoke<string>("create_sandbox_checkpoint", { snapshotName }),
+  rollbackSandboxCheckpoint: (snapshotName: string) => invoke<string>("rollback_sandbox_checkpoint", { snapshotName }),
+  execInSandbox: (guestCmd: string) => invoke<string>("exec_in_sandbox", { guestCmd }),
+  placeVmOnSecondaryScreen: () => invoke<string>("place_vm_on_secondary_screen"),
 };

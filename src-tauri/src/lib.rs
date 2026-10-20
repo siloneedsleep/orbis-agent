@@ -23,7 +23,8 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
-            // `windows: []` trong tauri.conf.json: toàn bộ cửa sổ được tạo ở đây.
+            // Mở dashboard ngay khi khởi động app theo yêu cầu
+            shell::dashboard::show(app.handle())?;
             shell::overlay::create(app.handle())?;
             shell::tray::create(app.handle())?;
 
@@ -44,6 +45,13 @@ pub fn run() {
             os::input::send_keystroke,
             os::input::setup_panic_hook,
             os::capture::capture_screen_region,
+            os::ollama::ollama_chat,
+            os::ollama::ollama_status,
+            os::sandbox::start_sandbox_vm,
+            os::sandbox::create_sandbox_checkpoint,
+            os::sandbox::rollback_sandbox_checkpoint,
+            os::sandbox::exec_in_sandbox,
+            os::sandbox::place_vm_on_secondary_screen
         ])
         .run(tauri::generate_context!())
         .expect("lỗi khi chạy Orbis Agent");

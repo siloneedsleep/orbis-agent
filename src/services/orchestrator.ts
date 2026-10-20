@@ -21,17 +21,16 @@ export class OrbisOrchestrator {
           primary.x, primary.y, primary.width, primary.height
         );
 
-        // 2. Reason: Plan next move
-        const action = await this.brain.planNextMove(goal, screenContext);
+        const step = await this.brain.planNextMove(goal, screenContext);
         
-        if (action.type === 'done') {
-          console.log("Task completed:", action.message);
+        if (step.action.type === 'done') {
+          console.log("Task completed:", step.message);
           this.isRunning = false;
           break;
         }
 
         // 3. Act: Execute
-        await this.brain.executeAction(action);
+        await this.brain.executeAction(step.action);
         
         // Small delay between steps to avoid overloading
         await new Promise(resolve => setTimeout(resolve, 1000));

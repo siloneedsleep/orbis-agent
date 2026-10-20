@@ -12,9 +12,9 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
     }
 
     WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("dashboard.html".into()))
-        .title("Orbis Agent")
-        .inner_size(760.0, 640.0)
-        .min_inner_size(560.0, 420.0)
+        .title("Orbis Agent - Workspace")
+        .inner_size(1180.0, 760.0)
+        .min_inner_size(840.0, 580.0)
         .center()
         .build()?;
     Ok(())
