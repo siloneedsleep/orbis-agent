@@ -1,53 +1,183 @@
-# Orbis Agent (scaffold)
+# Orbis Agent
 
-Tauri v2 + React + Tailwind + Framer Motion. **Chỉ Windows** (WebView2, Win32 API).
+Tauri v2 + React + Vite + Tailwind + Framer Motion. Ứng dụng chạy trên Windows, có overlay dạng "The Core" và dashboard thị trường / thử nghiệm trạng thái hệ thống.
 
-## Chạy
+## Mục tiêu
 
-Cần: Node 20+, Rust stable (toolchain MSVC), WebView2 runtime.
+- Wake/sleep overlay bằng hotkey toàn cục: `Ctrl + Alt + Space`
+- Tray icon để bật/tắt Core và mở dashboard
+- Overlay window phủ toàn màn hình và có thể ẩn/hiện theo trạng thái
+- The Core có nhiều trạng thái animation và logic bay di chuyển giữa màn hình
+- Dashboard đọc thông tin hệ thống như quyền admin / thời gian idle và điều khiển demo
+
+## Yêu cầu
+
+- Windows 10/11
+- Node.js 20+
+- Rust stable + toolchain MSVC
+- WebView2 runtime
+- Tauri dependencies được cài qua `npm install`
+
+## Chạy app
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-- `Ctrl+Alt+Space` hoặc click trái tray icon: The Core bay từ dock lên tâm màn chính / lặn xuống dock.
-- Chuột phải tray → **Open dashboard**: bảng thử Thinking / Idle / bay sang màn kế tiếp.
-- Đổi hotkey ở `src-tauri/src/lib.rs`.
-- Icon hiện tại là placeholder. Tạo bộ icon thật: `npx tauri icon duong-dan/icon-1024.png`.
+- Click trái tray icon: wake / sleep The Core
+- Menu tray: `Open dashboard`
+- Hotkey mặc định: `Ctrl+Alt+Space`
 
-## Cấu trúc
+## Cấu trúc repo
 
 ```text
-overlay.html / dashboard.html     entry cho 2 cửa sổ (Vite multi-page)
-src/
-  core/TheCore/                   TheCore.tsx (idle|thinking|flying), arcPath.ts
-  state/coreMachine.ts            reducer: toggle, think, idle, flyTo, landed
-  state/geometry.ts               đổi toạ độ monitor, chọn điểm đến chuyến bay
-  ipc/                            wrapper có type cho invoke() và event
-  windows/overlay/                OverlayApp: host The Core
-  windows/dashboard/              DashboardApp: bảng thử nghiệm
-src-tauri/
-  capabilities/                   overlay chỉ có quyền event; dashboard tương tự
-  src/shell/                      overlay.rs, dashboard.rs, tray.rs
-  src/os/                         idle.rs (GetLastInputInfo), elevation.rs (IsUserAnAdmin)
-  src/commands/                   get_overlay_layout, get_system_info, open_dashboard
+.
+├── README.md
+├── dashboard.html
+├── overlay.html
+├── package.json
+├── src/
+│   ├── core/
+│   │   └── TheCore/
+│   │       ├── TheCore.tsx
+│   │       ├── CoreMover.tsx
+│   │       ├── arcPath.ts
+│   │       └── index.ts
+│   ├── hooks/
+│   │   └── useVoicePulse.ts
+│   ├── ipc/
+│   │   ├── commands.ts
+│   │   └── events.ts
+│   ├── state/
+│   │   ├── coreMachine.ts
+│   │   └── geometry.ts
+│   ├── windows/
+│   │   ├── dashboard/
+│   │   │   ├── DashboardApp.tsx
+│   │   │   └── main.tsx
+│   │   └── overlay/
+│   │       ├── OverlayApp.tsx
+│   │       ├── OnboardingFlow.tsx
+│   │       ├── ChatBar.tsx
+│   │       └── main.tsx
+│   └── vite-env.d.ts
+├── src-tauri/
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
+│   ├── build.rs
+│   ├── capabilities/
+│   ├── icons/
+│   └── src/
+│       ├── lib.rs
+│       ├── main.rs
+│       ├── commands/
+│       │   ├── mod.rs
+│       │   ├── overlay.rs
+│       │   └── system.rs
+│       ├── os/
+│       │   ├── capture.rs
+│       │   ├── elevation.rs
+│       │   ├── idle.rs
+│       │   ├── input.rs
+│       │   ├── mod.rs
+│       │   ├── ollama.rs
+│       │   └── sandbox.rs
+│       └── shell/
+│           ├── dashboard.rs
+│           ├── mod.rs
+│           ├── overlay.rs
+│           └── tray.rs
+├── vite.config.ts
+└── tsconfig.json
 ```
 
-## Đã có / chưa có
+## Về logic chính
 
-Đã có: overlay trong suốt click-through phủ mọi màn hình, tray, global hotkey,
-The Core 3 state, bay cong giữa các màn, màu Cyan/Vàng theo quyền Admin.
+### 1) The Core state machine
+File: `src/state/coreMachine.ts`
 
-Chưa có (theo spec): onboarding, chat bubble và input bar, DXGI capture,
-`SendInput` + Bézier/keystroke engine, panic Esc×3, RBAC Tier 3/4, brain Local/Cloud,
-Privacy Guard, Handoff modal/toast.
+- `CoreState`: `spawning`, `idle`, `docked`, `listening`, `thinking`, `executing`, `sonic_flying`, `shielded`, `glitched`, `quarantine`, `time_rewind`, `sleeping`
+- Có reducer `coreReducer` để xử lý:
+  - wake / sleep
+  - chuyển trạng thái `thinking`
+  - bay đến target màn hình
+  - landed / sleep
 
-## Giới hạn đã biết
+### 2) Overlay + dashboard UI
+File: `src/windows/overlay/OverlayApp.tsx`
 
-- Overlay hoàn toàn click-through. Muốn bubble/input tương tác phải thêm hit-region
-  polling (`window.cursor_position()` + bật/tắt `set_ignore_cursor_events`).
-- Overlay là một window phủ cả virtual desktop, đổi px vật lý sang CSS px bằng
-  `devicePixelRatio`. Nhiều màn khác DPI scale sẽ bị lệch toạ độ.
-- Cắm/rút monitor lúc đang chạy: phải khởi động lại app.
-- Overlay không hiện trên game fullscreen exclusive.
+- Lắng nghe event wake từ backend
+- Tính toán `dock` và `home` theo monitor hiện tại
+- Hiển thị `TheCore` trong overlay
+- Có onboarding flow và chat bar
+- Click vào Core có thể mở chat / interactive mode
+
+File: `src/windows/dashboard/DashboardApp.tsx`
+
+- Hiển thị dashboard trạng thái hệ thống
+- Đọc `get_overlay_layout()` và `get_system_info()`
+- Gửi demo events như `think`, `idle`, `fly`
+
+### 3) Geometry / monitor positioning
+File: `src/state/geometry.ts`
+
+- Chuyển đổi monitor layout sang CSS coordinate
+- Tính vị trí docking / home / target cho The Core
+
+### 4) Rust / Tauri backend
+File: `src-tauri/src/lib.rs`
+
+- Đăng ký hotkey global `Ctrl+Alt+Space`
+- Tạo tray icon và overlay window khi app khởi động
+- Đăng ký các Tauri command:
+  - `get_overlay_layout`
+  - `set_overlay_interactive`
+  - `get_system_info`
+  - `open_dashboard`
+  - `move_mouse_bezier`
+  - `move_mouse_normalized`
+  - `mouse_click`
+  - `send_keystroke`
+  - `setup_panic_hook`
+  - `capture_screen_region`
+
+File: `src-tauri/src/shell/tray.rs`
+
+- Tạo tray icon
+- Menu bao gồm:
+  - `Wake / sleep The Core`
+  - `Open dashboard`
+  - `Quit`
+
+### 5) Windows OS helpers
+File: `src-tauri/src/os/*.rs`
+
+- `idle.rs`: đo thời gian không hoạt động
+- `elevation.rs`: kiểm tra quyền admin
+- `input.rs`: mô phỏng chuột/keyboard
+- `capture.rs`: capture vùng màn hình
+- `ollama.rs`: tích hợp Ollama / model inference
+- `sandbox.rs`: sandbox-related logic
+- `input.rs` cũng có logic `setup_panic_hook` (3x ESC → exit)
+
+## Tính năng đã có trong code hiện tại
+
+- Overlay có thể bật/tắt bằng hotkey và tray
+- Dashboard demo controller
+- The Core animation + flight movement
+- Lấy thông tin monitor / layout
+- Gắn `isAdmin` để đổi màu core (admin = vàng, user = cyan)
+- Idle detection
+- Mouse/keyboard automation trong Windows
+- Capture screen region
+- Onboarding flow và chat UI trong overlay
+
+## Lưu ý
+
+- Repo hiện đang là phiên bản desktop prototype / demo, không phải full agent runtime hoàn chỉnh.
+- Một số module như `ollama`, `capture`, `input`, `sandbox` đã có trong code nhưng cần được tích hợp sâu hơn vào flow thực tế của app.
+
+## Kết luận
+
+Đây là một ứng dụng desktop Windows, tập trung vào "The Core" overlay và dashboard thử nghiệm, với phần frontend React/Tailwind và phần backend Tauri/Rust đang được xây dựng cùng lúc.
