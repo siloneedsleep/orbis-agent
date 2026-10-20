@@ -1,0 +1,42 @@
+[package]
+name = "orbis-agent"
+version = "0.1.0"
+description = "Orbis Agent - The Spatial Desktop Agent"
+edition = "2021"
+
+[lib]
+name = "orbis_agent_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+enigo = "0.2.1"
+xcap = "0.3.3"
+base64 = "0.22"
+image = "0.25"
+rand = "0.8"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Win32 thô (idle time, elevation). Cùng repo windows-rs, nhưng binding không đổi theo phiên bản.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_System_SystemInformation",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
