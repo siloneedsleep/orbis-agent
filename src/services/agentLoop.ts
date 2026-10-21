@@ -31,16 +31,20 @@ export class AgentBrain {
     // 1. Local Ollama
     if (!config || config.type === 'local' || config.provider === 'ollama') {
       try {
+        const targetModel = config?.model === 'auto' ? undefined : config?.model;
+        const isVision = targetModel ? /vision|vl|llava|minicpm|bakllava/i.test(targetModel) : false;
+        
+        const userMsg: any = { role: 'user', content: prompt };
+        if (screenBase64 && isVision) {
+          userMsg.images = [screenBase64.replace(/^data:image\/[a-z]+;base64,/, '')];
+        }
+
         const msgs: any[] = [
           { role: 'system', content: systemPrompt },
-          { 
-            role: 'user', 
-            content: prompt,
-            images: screenBase64 ? [screenBase64.replace(/^data:image\/[a-z]+;base64,/, '')] : []
-          }
+          userMsg
         ];
         const res = await commands.ollamaChat(msgs, {
-          model: config?.model === 'auto' ? undefined : config?.model,
+          model: targetModel,
           maxPower: config?.maxPower ?? true
         });
         replyContent = res.content;

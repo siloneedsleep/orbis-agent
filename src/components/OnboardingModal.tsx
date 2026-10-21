@@ -40,6 +40,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ onComplete }) 
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<{ valid: boolean; error?: string } | null>(null);
 
+  const [startingOllama, setStartingOllama] = useState(false);
+
   // Quét Ollama khi chọn local
   const scanOllama = async () => {
     setOllamaLoading(true);
@@ -53,6 +55,18 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ onComplete }) 
       setOllamaStatus(null);
     } finally {
       setOllamaLoading(false);
+    }
+  };
+
+  const handleStartOllama = async () => {
+    setStartingOllama(true);
+    try {
+      await commands.startOllamaServer();
+      await scanOllama();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setStartingOllama(false);
     }
   };
 
@@ -298,11 +312,20 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ onComplete }) 
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200">
-                      <p className="font-medium text-amber-300 mb-1">Chưa kết nối được Ollama hoặc chưa có model</p>
+                    <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200 space-y-2">
+                      <p className="font-medium text-amber-300">Chưa kết nối được Ollama hoặc chưa có model</p>
                       <p className="text-zinc-400">
-                        Vui lòng mở Ollama trên máy và kéo model về bằng lệnh: <code className="text-cyan-300 font-mono">ollama run deepseek-r1</code> hoặc <code className="text-cyan-300 font-mono">ollama run qwen2.5-coder</code>.
+                        Đảm bảo Ollama đang chạy trên máy (cổng 11434). Nếu Ollama chưa được bật, bấm nút dưới để hệ thống tự khởi động:
                       </p>
+                      <button
+                        type="button"
+                        onClick={handleStartOllama}
+                        disabled={startingOllama || ollamaLoading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium transition disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${startingOllama || ollamaLoading ? 'animate-spin' : ''}`} />
+                        {startingOllama ? 'Đang kích hoạt tiến trình Ollama...' : 'Khởi động Ollama Server'}
+                      </button>
                     </div>
                   )}
                 </div>

@@ -1,19 +1,26 @@
-//! Client Ollama (local LLM). Mặc định chạy ở chế độ "max power":
-//! full GPU offload, toàn bộ luồng CPU, giữ model nằm trong RAM/VRAM, và tự chọn model lớn nhất đã cài.
-//!
-//! Gọi từ Rust thay vì từ webview: origin của Tauri trên Windows (`http://tauri.localhost`)
-//! không nằm trong danh sách CORS mặc định của Ollama nên fetch từ frontend sẽ bị chặn.
+//! Client Ollama (local LLM).
+//! Hỗ trợ kết nối IPv4 trực tiếp (tránh lỗi phân giải IPv6 localhost trên Windows),
+//! tự động fallback khi model không hỗ trợ ảnh (Vision), tự động strip options nếu thiếu VRAM,
+//! và hỗ trợ kích hoạt tiến trình Ollama nền khi chưa chạy.
 
+use std::process::Command;
 use std::time::Duration;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-const BASE_URL: &str = "http://localhost:11434";
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+const DEFAULT_HOST: &str = "http://127.0.0.1:11434";
+const MAX_CTX_CAP: u64 = 8_192; // Giới hạn an toàn trên RAM/VRAM để không làm sập tiến trình
 
-/// Trần context ở chế độ max. Context càng lớn càng ngốn VRAM (KV cache); vượt VRAM thì Ollama
-/// đẩy layer sang CPU và chậm đi nhiều lần. Nâng số này nếu máy còn dư VRAM.
-const MAX_CTX_CAP: u64 = 32_768;
+fn get_base_url() -> String {
+    std::env::var("OLLAMA_HOST")
+        .unwrap_or_else(|_| DEFAULT_HOST.to_string())
+        .replace("localhost", "127.0.0.1")
+}
 
 fn client(timeout_secs: u64) -> reqwest::Client {
     reqwest::Client::builder()
@@ -29,12 +36,55 @@ pub struct ModelInfo {
     pub size_bytes: u64,
 }
 
+pub fn spawn_ollama_process() -> Result<(), String> {
+    let mut candidates = vec!["ollama".to_string()];
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        candidates.push(format!("{local_app_data}\\Programs\\Ollama\\ollama.exe"));
+    }
+
+    for bin in candidates {
+        let spawned = Command::new(&bin)
+            .arg("serve")
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+        if spawned.is_ok() {
+            return Ok(());
+        }
+    }
+    Err("Không tìm thấy tệp ollama.exe để tự động khởi động. Vui lòng mở thủ công hoặc cài đặt Ollama.".to_string())
+}
+
+#[tauri::command(async)]
+pub async fn start_ollama_server() -> Result<String, String> {
+    let base = get_base_url();
+    let c = client(2);
+
+    // Nếu đã chạy rồi thì báo thành công luôn
+    if c.get(format!("{base}/api/tags")).send().await.is_ok() {
+        return Ok("Ollama đã sẵn sàng".to_string());
+    }
+
+    // Chưa chạy thì spawn tiến trình
+    spawn_ollama_process()?;
+
+    // Đợi tối đa 6 giây để server lên
+    for _ in 0..12 {
+        std::thread::sleep(Duration::from_millis(500));
+        if c.get(format!("{base}/api/tags")).send().await.is_ok() {
+            return Ok("Đã khởi động Ollama thành công".to_string());
+        }
+    }
+
+    Ok("Đã gửi tín hiệu khởi động Ollama, vui lòng đợi vài giây để server nạp xong.".to_string())
+}
+
 async fn installed(c: &reqwest::Client) -> Result<Vec<ModelInfo>, String> {
+    let base = get_base_url();
     let resp = c
-        .get(format!("{BASE_URL}/api/tags"))
+        .get(format!("{base}/api/tags"))
         .send()
         .await
-        .map_err(|e| format!("Không kết nối được Ollama ({BASE_URL}): {e}"))?;
+        .map_err(|e| format!("Không kết nối được Ollama ({base}): {e}"))?;
     let v: Value = resp.json().await.map_err(|e| e.to_string())?;
 
     Ok(v["models"]
@@ -52,7 +102,6 @@ async fn installed(c: &reqwest::Client) -> Result<Vec<ModelInfo>, String> {
         .unwrap_or_default())
 }
 
-/// "Model lớn nhất" = file model nặng nhất đã cài (bỏ qua model embedding vì không chat được).
 fn largest(models: &[ModelInfo]) -> Option<&ModelInfo> {
     models
         .iter()
@@ -60,10 +109,10 @@ fn largest(models: &[ModelInfo]) -> Option<&ModelInfo> {
         .max_by_key(|m| m.size_bytes)
 }
 
-/// Context tối đa mà model hỗ trợ (khoá `<arch>.context_length` trong model_info).
 async fn context_length(c: &reqwest::Client, model: &str) -> Option<u64> {
+    let base = get_base_url();
     let v: Value = c
-        .post(format!("{BASE_URL}/api/show"))
+        .post(format!("{base}/api/show"))
         .json(&json!({ "model": model }))
         .send()
         .await
@@ -79,30 +128,29 @@ async fn context_length(c: &reqwest::Client, model: &str) -> Option<u64> {
         .as_u64()
 }
 
-fn max_options(model_ctx: Option<u64>) -> Value {
+fn make_options(model_ctx: Option<u64>) -> Value {
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-    let ctx = model_ctx.map_or(MAX_CTX_CAP, |c| c.min(MAX_CTX_CAP));
+    let ctx = model_ctx.map_or(4096, |c| c.min(MAX_CTX_CAP));
     json!({
-        "num_gpu": 999,      // đẩy toàn bộ layer lên GPU (Ollama tự cắt về số layer thật của model)
         "num_thread": threads,
         "num_ctx": ctx,
-        "num_batch": 512,
     })
 }
 
-async fn send(c: &reqwest::Client, body: &Value) -> Result<Value, String> {
+async fn send_chat(c: &reqwest::Client, body: &Value) -> Result<Value, String> {
+    let base = get_base_url();
     let resp = c
-        .post(format!("{BASE_URL}/api/chat"))
+        .post(format!("{base}/api/chat"))
         .json(body)
         .send()
         .await
-        .map_err(|e| format!("Không kết nối được Ollama ({BASE_URL}): {e}"))?;
+        .map_err(|e| format!("Không kết nối được Ollama ({base}): {e}"))?;
     let status = resp.status();
     let v: Value = resp.json().await.map_err(|e| e.to_string())?;
     if status.is_success() {
         Ok(v)
     } else {
-        Err(v["error"].as_str().unwrap_or("lỗi không rõ").to_string())
+        Err(v["error"].as_str().unwrap_or("Lỗi máy chủ Ollama").to_string())
     }
 }
 
@@ -110,7 +158,6 @@ async fn send(c: &reqwest::Client, body: &Value) -> Result<Value, String> {
 pub struct ChatMsg {
     pub role: String,
     pub content: String,
-    /// Ảnh base64 (không có tiền tố data:) cho model vision.
     #[serde(default)]
     pub images: Vec<String>,
 }
@@ -120,11 +167,9 @@ pub struct ChatMsg {
 pub struct ChatReply {
     pub model: String,
     pub content: String,
-    /// false nếu cấu hình max bị lỗi (vd. hết VRAM) và đã tự lùi về mặc định của Ollama.
     pub max_power: bool,
 }
 
-/// `model`: None hoặc "auto" = model lớn nhất đã cài. `max_power`: mặc định true.
 #[tauri::command]
 pub async fn ollama_chat(
     messages: Vec<ChatMsg>,
@@ -137,13 +182,14 @@ pub async fn ollama_chat(
         let m = m.trim();
         !m.is_empty() && m != "auto"
     });
+
     let model = match requested {
         Some(m) => m,
         None => {
             let all = installed(&c).await?;
             largest(&all)
                 .map(|m| m.name.clone())
-                .ok_or("Ollama chưa có model nào. Chạy: ollama pull <tên model>")?
+                .ok_or("Ollama chưa có model nào. Chạy lệnh: ollama pull <model>")?
         }
     };
 
@@ -158,39 +204,74 @@ pub async fn ollama_chat(
         })
         .collect();
 
-    // keep_alive = -1: không bao giờ unload, lượt sau không phải nạp lại model.
     let mut body = json!({ "model": model, "messages": msgs, "stream": false, "keep_alive": -1 });
-    let mut used_max = max_power.unwrap_or(true);
-    if used_max {
-        body["options"] = max_options(context_length(&c, &model).await);
+    let mut used_options = max_power.unwrap_or(false);
+    if used_options {
+        body["options"] = make_options(context_length(&c, &model).await);
     }
 
-    let reply = match send(&c, &body).await {
+    // Lượt 1: Thử gửi bình thường
+    let reply = match send_chat(&c, &body).await {
         Ok(v) => v,
-        Err(err) if used_max => {
-            // Ép full GPU + context lớn có thể hết VRAM: thử lại một lần với mặc định của Ollama.
-            eprintln!("[orbis] max-power thất bại ({err}), thử lại với cấu hình mặc định");
-            if let Some(obj) = body.as_object_mut() {
-                obj.remove("options");
+        Err(err) => {
+            eprintln!("[orbis] Lượt 1 thất bại ({err}), kiểm tra fallback...");
+            
+            // Nếu có ảnh mà model không hỗ trợ vision (ví dụ qwen2.5-coder, deepseek-r1):
+            // Thử strip ảnh ra và chỉ gửi text
+            let mut stripped_body = body.clone();
+            let mut had_images = false;
+            if let Some(arr) = stripped_body["messages"].as_array_mut() {
+                for m in arr.iter_mut() {
+                    if let Some(obj) = m.as_object_mut() {
+                        if obj.remove("images").is_some() {
+                            had_images = true;
+                        }
+                    }
+                }
             }
-            used_max = false;
-            send(&c, &body).await?
+
+            if had_images {
+                eprintln!("[orbis] Đã gỡ bỏ ảnh để thử lại chế độ thuần văn bản...");
+                match send_chat(&c, &stripped_body).await {
+                    Ok(v) => v,
+                    Err(err2) => {
+                        // Thử gỡ tiếp options nếu lỗi VRAM
+                        if let Some(obj) = stripped_body.as_object_mut() {
+                            obj.remove("options");
+                        }
+                        used_options = false;
+                        send_chat(&c, &stripped_body).await.map_err(|e| format!("{err2} -> {e}"))?
+                    }
+                }
+            } else if used_options {
+                // Gỡ options nếu lỗi VRAM
+                if let Some(obj) = body.as_object_mut() {
+                    obj.remove("options");
+                }
+                used_options = false;
+                send_chat(&c, &body).await?
+            } else {
+                return Err(err);
+            }
         }
-        Err(err) => return Err(err),
     };
 
     let content = reply["message"]["content"]
         .as_str()
-        .ok_or("Ollama không trả về nội dung")?
+        .ok_or("Ollama không trả về nội dung text")?
         .to_string();
-    Ok(ChatReply { model, content, max_power: used_max })
+
+    Ok(ChatReply {
+        model,
+        content,
+        max_power: used_options,
+    })
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OllamaStatus {
     pub models: Vec<ModelInfo>,
-    /// Model sẽ được chọn ở chế độ auto.
     pub largest: Option<String>,
     pub threads: usize,
     pub ctx_cap: u64,
@@ -198,7 +279,7 @@ pub struct OllamaStatus {
 
 #[tauri::command]
 pub async fn ollama_status() -> Result<OllamaStatus, String> {
-    let c = client(8);
+    let c = client(20); // 20s timeout cho máy CPU load model
     let models = installed(&c).await?;
     let largest = largest(&models).map(|m| m.name.clone());
     Ok(OllamaStatus {

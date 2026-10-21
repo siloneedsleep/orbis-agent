@@ -47,6 +47,7 @@ pub fn run() {
             os::capture::capture_screen_region,
             os::ollama::ollama_chat,
             os::ollama::ollama_status,
+            os::ollama::start_ollama_server,
             os::sandbox::start_sandbox_vm,
             os::sandbox::create_sandbox_checkpoint,
             os::sandbox::rollback_sandbox_checkpoint,

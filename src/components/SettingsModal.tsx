@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Key, User, Cpu, Check, AlertCircle } from 'lucide-react';
 import { UserProfile, LLMConfig, saveStoredProfile, saveStoredLLMConfig } from '@/state/agentStore';
 import { validateApiKey } from '@/services/apiValidator';
+import { commands, OllamaStatus } from '@/ipc/commands';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -28,6 +29,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [model, setModel] = useState(config.model);
   const [validating, setValidating] = useState(false);
   const [testResult, setTestResult] = useState<{ valid: boolean; error?: string } | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+
+  useEffect(() => {
+    if (llmType === 'local') {
+      commands.ollamaStatus().then(setOllamaStatus).catch(() => setOllamaStatus(null));
+    }
+  }, [llmType]);
 
   const getPronoun = (g: 'male' | 'female' | 'other') => {
     if (g === 'male') return 'anh';
@@ -206,13 +214,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             ) : (
               <div className="space-y-1.5">
                 <label className="text-xs text-zinc-400">Model Ollama</label>
-                <input
-                  type="text"
-                  placeholder="auto hoặc tên model (ví dụ: deepseek-r1)"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-mono text-white"
-                />
+                {ollamaStatus && ollamaStatus.models.length > 0 ? (
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-white focus:border-cyan-400 focus:outline-none"
+                  >
+                    <option value="auto">Tự động ({ollamaStatus.largest || 'Model lớn nhất'})</option>
+                    {ollamaStatus.models.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.name} ({(m.sizeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB)
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    placeholder="auto hoặc tên model (ví dụ: qwen2.5-coder:14b)"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-mono text-white"
+                  />
+                )}
               </div>
             )}
           </div>

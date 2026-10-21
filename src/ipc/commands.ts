@@ -67,6 +67,7 @@ export const commands = {
   captureScreenRegion: (x: number, y: number, width: number, height: number) => 
     invoke<string>("capture_screen_region", { x, y, width, height }),
   ollamaStatus: () => invoke<OllamaStatus>("ollama_status"),
+  startOllamaServer: () => invoke<string>("start_ollama_server"),
   ollamaChat: (messages: OllamaMessage[], opts: OllamaOptions = {}) =>
     invoke<OllamaReply>("ollama_chat", {
       messages,
