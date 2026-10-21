@@ -79,4 +79,15 @@ export const commands = {
   rollbackSandboxCheckpoint: (snapshotName: string) => invoke<string>("rollback_sandbox_checkpoint", { snapshotName }),
   execInSandbox: (guestCmd: string) => invoke<string>("exec_in_sandbox", { guestCmd }),
   placeVmOnSecondaryScreen: () => invoke<string>("place_vm_on_secondary_screen"),
+  getPetInfo: () => invoke<PetInfo>("get_pet_info"),
+  getPetVideoBase64: (clipName: string) => invoke<string>("get_pet_video_base64", { clipName }),
 };
+
+export interface PetInfo {
+  id: string;
+  name: string;
+  species: string;
+  breed: string;
+  isAvailable: boolean;
+  clipsCount: number;
+}

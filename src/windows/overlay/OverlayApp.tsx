@@ -1,25 +1,14 @@
 import React, { useEffect, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { TheCore } from "@/core/TheCore";
-import { commands, SystemInfo } from "@/ipc/commands";
+import { CyberCat, CatActionState } from "@/components/CyberCat/CyberCat";
+import { commands } from "@/ipc/commands";
 import { events } from "@/ipc/events";
 
 export function OverlayApp() {
-  const [awake, setAwake] = useState(false);
-  const [state, setState] = useState<'idle' | 'thinking' | 'executing'>('idle');
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [catAction, setCatAction] = useState<CatActionState>('idle');
+  const [customMsg, setCustomMsg] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    let cancelled = false;
-
-    // Load admin privilege
-    commands.getSystemInfo()
-      .then((sys) => {
-        if (!cancelled) setIsAdmin(sys.isAdmin);
-      })
-      .catch(() => {});
-
-    // Listen to wake & demo events
     let disposed = false;
     const unlisteners: UnlistenFn[] = [];
     const track = (pending: Promise<UnlistenFn>) =>
@@ -27,16 +16,25 @@ export function OverlayApp() {
         .then((un) => (disposed ? un() : unlisteners.push(un)))
         .catch(() => {});
 
+    // Lắng nghe sự kiện wake (hotkey Ctrl+Alt+Space hoặc tray)
     track(
       events.onWake(() => {
-        setAwake((prev) => !prev);
+        setCatAction((prev) => (prev === 'sleep' ? 'wake' : 'sleep'));
+      })
+    );
+
+    // Lắng nghe sự kiện từ Dashboard và Agent Loop
+    track(
+      events.onPetState(({ state, message }) => {
+        setCatAction(state);
+        if (message) setCustomMsg(message);
       })
     );
 
     track(
       events.onDemo(({ action }) => {
-        if (action === "think") setState("thinking");
-        else if (action === "idle") setState("idle");
+        if (action === "think") setCatAction("thinking");
+        else if (action === "idle") setCatAction("idle");
       })
     );
 
@@ -46,21 +44,25 @@ export function OverlayApp() {
     };
   }, []);
 
-  if (!awake) return null;
-
   return (
     <div className="pointer-events-none fixed inset-0 overflow-hidden select-none">
-      {/* Screen Focus Accent Border when active */}
-      <div className={`absolute inset-0 pointer-events-none border-2 transition-opacity duration-300 ${
-        state === 'executing' 
-          ? 'border-amber-400/50 opacity-100 shadow-[inset_0_0_20px_rgba(251,191,36,0.15)]' 
-          : 'border-cyan-500/30 opacity-70'
-      }`} />
+      {/* Viền sáng Accent vi tính khi Agent đang thao tác máy */}
+      <div 
+        className={`absolute inset-0 pointer-events-none border-2 transition-opacity duration-300 ${
+          catAction === 'executing' 
+            ? 'border-amber-400/50 opacity-100 shadow-[inset_0_0_25px_rgba(251,191,36,0.2)]' 
+            : catAction === 'thinking'
+            ? 'border-cyan-500/40 opacity-80 shadow-[inset_0_0_15px_rgba(0,240,255,0.15)]'
+            : 'border-transparent opacity-0'
+        }`} 
+      />
 
-      {/* Floating Status Pill in corner */}
-      <div className="absolute bottom-6 right-6 pointer-events-none">
-        <TheCore state={state} isAdmin={isAdmin} />
-      </div>
+      {/* Mèo Xanh Cyber Cat trên Desktop */}
+      <CyberCat 
+        actionState={catAction}
+        customMessage={customMsg}
+        onOpenDashboard={() => commands.openDashboard().catch(() => {})}
+      />
     </div>
   );
 }

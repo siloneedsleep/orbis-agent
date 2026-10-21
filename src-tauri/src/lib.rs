@@ -52,7 +52,9 @@ pub fn run() {
             os::sandbox::create_sandbox_checkpoint,
             os::sandbox::rollback_sandbox_checkpoint,
             os::sandbox::exec_in_sandbox,
-            os::sandbox::place_vm_on_secondary_screen
+            os::sandbox::place_vm_on_secondary_screen,
+            os::pet::get_pet_info,
+            os::pet::get_pet_video_base64
         ])
         .run(tauri::generate_context!())
         .expect("lỗi khi chạy Orbis Agent");

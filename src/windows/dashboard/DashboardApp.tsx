@@ -17,25 +17,34 @@ import {
   Monitor, 
   Check, 
   HelpCircle,
-  Plus
+  Plus,
+  GraduationCap,
+  Sparkles
 } from "lucide-react";
 import { commands, OverlayLayout, SystemInfo } from "@/ipc/commands";
+import { events } from "@/ipc/events";
 import { 
   UserProfile, 
   LLMConfig, 
   WorkstreamItem, 
   getStoredProfile, 
-  getStoredLLMConfig 
+  getStoredLLMConfig,
+  CatSettings,
+  getStoredCatSettings,
+  saveStoredCatSettings,
+  addCatExp
 } from "@/state/agentStore";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { SettingsModal } from "@/components/SettingsModal";
 import { WorkstreamCard } from "@/components/WorkstreamCard";
+import { TeachCatView } from "@/components/TeachCat/TeachCatView";
 import { AgentBrain, AgentAction } from "@/services/agentLoop";
 
 export function DashboardApp() {
   // Profiles & Settings
   const [profile, setProfile] = useState<UserProfile | null>(getStoredProfile());
   const [config, setConfig] = useState<LLMConfig | null>(getStoredLLMConfig());
+  const [catSettings, setCatSettings] = useState<CatSettings>(getStoredCatSettings());
   const [showOnboarding, setShowOnboarding] = useState<boolean>(!getStoredProfile() || !getStoredLLMConfig());
   const [showSettings, setShowSettings] = useState<boolean>(false);
 
@@ -43,8 +52,8 @@ export function DashboardApp() {
   const [showInspector, setShowInspector] = useState<boolean>(true);
   const [inspectorTab, setInspectorTab] = useState<'screen' | 'logs' | 'system'>('screen');
 
-  // Execution Mode: 'computer_use' (OS control) | 'sandbox' (VM detonation) | 'chat'
-  const [mode, setMode] = useState<'computer_use' | 'sandbox' | 'chat'>('computer_use');
+  // Execution Mode: 'computer_use' (OS control) | 'sandbox' (VM detonation) | 'chat' | 'teach_cat'
+  const [mode, setMode] = useState<'computer_use' | 'sandbox' | 'chat' | 'teach_cat'>('computer_use');
 
   // System status
   const [sys, setSys] = useState<SystemInfo | null>(null);
@@ -117,6 +126,7 @@ export function DashboardApp() {
   const handleEmergencyStop = () => {
     setIsRunning(false);
     setCurrentStage(null);
+    events.emitPetState({ state: 'wake', message: 'Đã dừng khẩn cấp!' }).catch(() => {});
     addLog("EMERGENCY KILL SWITCH ACTIVATED: Đã dừng toàn bộ vòng lặp Agent!");
     addItem({
       type: 'assistant',
@@ -149,6 +159,7 @@ export function DashboardApp() {
 
         // Phase 1: Analyzing Screen
         setCurrentStage('analyzing');
+        events.emitPetState({ state: 'thinking', message: 'Em đang quan sát màn hình...' }).catch(() => {});
         addLog(`[Vòng ${loopCount}] Giai đoạn 1: Phân tích màn hình...`);
         
         let screenData: string | undefined = undefined;
@@ -178,9 +189,13 @@ export function DashboardApp() {
 
         // Phase 3: Executing Action
         setCurrentStage('executing');
+        events.emitPetState({ state: 'executing', message: `Em đang thực hiện ${plan.action.type}...` }).catch(() => {});
         addLog(`[Vòng ${loopCount}] Giai đoạn 3: Thực thi hành động [${plan.action.type}]`);
 
         if (plan.action.type === 'done') {
+          events.emitPetState({ state: 'done', message: 'Tác vụ đã hoàn thành xuất sắc! ✨' }).catch(() => {});
+          const updatedCat = addCatExp(15);
+          setCatSettings(updatedCat);
           addItem({
             type: 'assistant',
             content: plan.message || 'Tác vụ đã hoàn thành.',
@@ -291,10 +306,13 @@ export function DashboardApp() {
         {/* Brand & Status */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-              <Bot className="h-4 w-4" />
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 shadow-[0_0_10px_rgba(0,240,255,0.2)]">
+              <span className="text-sm">🐱</span>
             </div>
-            <span className="font-semibold tracking-tight text-white text-sm">ORBIS AGENT</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="font-semibold tracking-tight text-white text-sm">ORBIS AGENT</span>
+              <span className="text-[10px] font-mono text-cyan-400">· {catSettings.name}</span>
+            </div>
             <span className="text-[10px] font-mono text-zinc-500 bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-700/60">
               v0.2.0
             </span>
@@ -390,6 +408,7 @@ export function DashboardApp() {
                 { id: 'computer_use', label: 'Computer-Use (OS)', icon: MousePointer, desc: 'Tự động chuột & bàn phím' },
                 { id: 'sandbox', label: 'Detonation Sandbox', icon: ShieldAlert, desc: 'Cách ly trong Hyper-V VM' },
                 { id: 'chat', label: 'Chat Assistant', icon: Bot, desc: 'Trò chuyện không can thiệp OS' },
+                { id: 'teach_cat', label: 'Huấn luyện Mèo', icon: GraduationCap, desc: 'Dạy kỹ năng & thói quen' },
               ].map((m) => {
                 const Icon = m.icon;
                 const active = mode === m.id;
@@ -412,6 +431,51 @@ export function DashboardApp() {
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* Mèo Trợ Lý Companion Card */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-3 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🐱</span>
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    {catSettings.name}
+                    <span className="text-[10px] text-cyan-400 font-mono">Lv.{catSettings.bondLevel}</span>
+                  </div>
+                  <div className="text-[10px] text-zinc-500 capitalize">{catSettings.colorTheme} Cyber Cat</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const updated = { ...catSettings, enabled: !catSettings.enabled };
+                  setCatSettings(updated);
+                  saveStoredCatSettings(updated);
+                }}
+                className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
+                  catSettings.enabled
+                    ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300'
+                    : 'border-zinc-700 bg-zinc-800 text-zinc-500'
+                }`}
+                title={catSettings.enabled ? 'Bấm để ẩn mèo trên màn hình' : 'Bấm để hiện mèo trên màn hình'}
+              >
+                {catSettings.enabled ? 'Đang bật' : 'Đang ẩn'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-[10px]">
+              <span className="text-zinc-400">
+                {catSettings.taughtSkills.filter(s => s.enabled).length} kỹ năng bật
+              </span>
+              <button
+                type="button"
+                onClick={() => setMode('teach_cat')}
+                className="text-cyan-400 hover:underline font-medium flex items-center gap-1"
+              >
+                <GraduationCap className="h-3 w-3" /> Dạy thêm
+              </button>
             </div>
           </div>
 
@@ -443,9 +507,13 @@ export function DashboardApp() {
           </div>
         </aside>
 
-        {/* CENTER WORKSTREAM */}
+        {/* CENTER WORKSPACE */}
         <main className="flex flex-1 flex-col overflow-hidden bg-zinc-950">
-          {/* Multi-stage Progress Indicator */}
+          {mode === 'teach_cat' ? (
+            <TeachCatView onSettingsChange={(s) => setCatSettings(s)} />
+          ) : (
+            <>
+              {/* Multi-stage Progress Indicator */}
           {isRunning && currentStage && (
             <div className="border-b border-zinc-800 bg-zinc-900/60 px-4 py-2 flex items-center justify-center gap-6 text-xs font-mono">
               {[
@@ -559,6 +627,8 @@ export function DashboardApp() {
               </div>
             </div>
           </div>
+            </>
+          )}
         </main>
 
         {/* RIGHT COLLAPSIBLE INSPECTOR */}
