@@ -49,11 +49,16 @@ export interface CatSettings {
   enabled: boolean;
   bondLevel: number;
   bondExp: number;
+  treats: number; // Tiền tệ của mèo (Treats 🐟)
+  redeemedCodes: string[]; // Danh sách mã redeem đã dùng
+  isCreator?: boolean; // Quyền tạo & quản lý skill
   speechBubbleEnabled: boolean;
   taughtSkills: CatSkill[];
 }
 
 const CAT_KEY = 'orbis_cat_settings';
+export const CREATOR_KEY = 'orbis_creator_key';
+export const CREATOR_MASTER_SIGN = 'ORBIS_CREATOR_ROOT_KEY_9999';
 
 export const DEFAULT_CAT_SKILLS: CatSkill[] = [
   {
@@ -98,9 +103,26 @@ export const DEFAULT_CAT_SETTINGS: CatSettings = {
   enabled: true,
   bondLevel: 1,
   bondExp: 25,
+  treats: 50,
+  redeemedCodes: [],
+  isCreator: true,
   speechBubbleEnabled: true,
   taughtSkills: DEFAULT_CAT_SKILLS,
 };
+
+export function isCreatorDevice(): boolean {
+  try {
+    const key = localStorage.getItem(CREATOR_KEY);
+    if (!key) {
+      // Mặc định khởi tạo creator key trên máy phát triển này
+      localStorage.setItem(CREATOR_KEY, CREATOR_MASTER_SIGN);
+      return true;
+    }
+    return key === CREATOR_MASTER_SIGN;
+  } catch {
+    return false;
+  }
+}
 
 export function getStoredCatSettings(): CatSettings {
   try {
@@ -110,6 +132,9 @@ export function getStoredCatSettings(): CatSettings {
     return {
       ...DEFAULT_CAT_SETTINGS,
       ...parsed,
+      treats: typeof parsed.treats === 'number' ? parsed.treats : 50,
+      redeemedCodes: Array.isArray(parsed.redeemedCodes) ? parsed.redeemedCodes : [],
+      isCreator: isCreatorDevice(),
       taughtSkills: parsed.taughtSkills || DEFAULT_CAT_SKILLS,
     };
   } catch {
@@ -125,19 +150,81 @@ export function addCatExp(amount: number): CatSettings {
   const current = getStoredCatSettings();
   let newExp = current.bondExp + amount;
   let newLevel = current.bondLevel;
+  let bonusTreats = 0;
 
   while (newExp >= 100 && newLevel < 10) {
     newExp -= 100;
     newLevel += 1;
+    bonusTreats += 50; // Thưởng 50 Treats khi lên cấp!
   }
 
   const updated: CatSettings = {
     ...current,
     bondLevel: newLevel,
     bondExp: Math.min(newExp, 99),
+    treats: current.treats + bonusTreats,
   };
   saveStoredCatSettings(updated);
   return updated;
+}
+
+export function addCatTreats(amount: number): CatSettings {
+  const current = getStoredCatSettings();
+  const updated: CatSettings = {
+    ...current,
+    treats: Math.max(0, (current.treats || 0) + amount),
+  };
+  saveStoredCatSettings(updated);
+  return updated;
+}
+
+export function spendCatTreats(amount: number): { success: boolean; settings: CatSettings; message?: string } {
+  const current = getStoredCatSettings();
+  if ((current.treats || 0) < amount) {
+    return {
+      success: false,
+      settings: current,
+      message: `Bạn không đủ Treats! (Cần ${amount} 🐟, hiện có ${current.treats || 0} 🐟)`
+    };
+  }
+
+  const updated: CatSettings = {
+    ...current,
+    treats: current.treats - amount,
+  };
+  saveStoredCatSettings(updated);
+  return { success: true, settings: updated };
+}
+
+export function renameCat(newName: string): { success: boolean; settings: CatSettings; message: string } {
+  const current = getStoredCatSettings();
+  if (current.bondLevel < 10) {
+    return {
+      success: false,
+      settings: current,
+      message: `Cần đạt Cấp độ thân thiết Lv.10 để mở khóa quyền đặt tên cho Mèo! (Hiện tại: Lv.${current.bondLevel}/10)`
+    };
+  }
+
+  const name = newName.trim();
+  if (!name) {
+    return {
+      success: false,
+      settings: current,
+      message: "Tên mèo không được để trống!"
+    };
+  }
+
+  const updated: CatSettings = {
+    ...current,
+    name
+  };
+  saveStoredCatSettings(updated);
+  return {
+    success: true,
+    settings: updated,
+    message: `Đã đổi tên mèo thành "${name}"! ✨`
+  };
 }
 
 const PROFILE_KEY = 'orbis_user_profile';

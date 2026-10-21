@@ -5,9 +5,13 @@ import {
   getStoredCatSettings, 
   saveStoredCatSettings, 
   addCatExp, 
+  addCatTreats,
+  spendCatTreats,
+  renameCat,
   getStoredProfile 
 } from '@/state/agentStore';
 import { AgentBrain } from '@/services/agentLoop';
+import { redeemCode, RedeemResult } from '@/services/redeemService';
 import { 
   Heart, 
   Utensils, 
@@ -19,7 +23,12 @@ import {
   Sparkles,
   X,
   Send,
-  MessageSquare
+  MessageSquare,
+  Gift,
+  Edit3,
+  Lock,
+  Check,
+  Coins
 } from 'lucide-react';
 
 export type CatActionState = 
@@ -83,13 +92,30 @@ export const CyberCat: React.FC<CyberCatProps> = ({
   const [videoSrc, setVideoSrc] = useState<string>('');
   const [currentClip, setCurrentClip] = useState<string>('05-idle-sphinx-blink');
   const [speechText, setSpeechText] = useState<string | null>(null);
+
+  // Trạng thái các menu & popups
   const [showMenu, setShowMenu] = useState<boolean>(false);
   const [showPoseBubbles, setShowPoseBubbles] = useState<boolean>(false);
   const [showMiniChat, setShowMiniChat] = useState<boolean>(false);
+  const [showRedeemModal, setShowRedeemModal] = useState<boolean>(false);
+  const [showRenameModal, setShowRenameModal] = useState<boolean>(false);
+
+  // Dữ liệu nhập
   const [miniChatPrompt, setMiniChatPrompt] = useState<string>('');
   const [isChatBusy, setIsChatBusy] = useState<boolean>(false);
+  const [redeemInput, setRedeemInput] = useState<string>('');
+  const [redeemMsg, setRedeemMsg] = useState<{ text: string; success: boolean } | null>(null);
+  const [renameInput, setRenameInput] = useState<string>(settings.name);
+  const [renameMsg, setRenameMsg] = useState<string | null>(null);
+
+  // Kéo thả như tab desktop
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const isPointerDownRef = useRef<boolean>(false);
+  const dragStartRef = useRef<{ startX: number; startY: number; origX: number; origY: number }>({
+    startX: 0, startY: 0, origX: 0, origY: 0
+  });
+  const hasMovedRef = useRef<boolean>(false);
+
   const [hearts, setHearts] = useState<{ id: number; x: number; y: number }[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -97,6 +123,8 @@ export const CyberCat: React.FC<CyberCatProps> = ({
   const speechTimerRef = useRef<any>(null);
   const clickTimerRef = useRef<any>(null);
   const miniChatInputRef = useRef<HTMLInputElement>(null);
+  const redeemInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   // Cập nhật settings từ storage
   useEffect(() => {
@@ -147,21 +175,31 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     }, duration);
   };
 
-  // Tự động focus input khi mở Mini Bubble Chat
+  // Tự động focus input khi mở Mini Bubble Chat, Redeem Modal, Rename Modal
   useEffect(() => {
     if (showMiniChat) {
       commands.setOverlayInteractive(true);
-      setTimeout(() => {
-        miniChatInputRef.current?.focus();
-      }, 100);
+      setTimeout(() => miniChatInputRef.current?.focus(), 100);
     }
-  }, [showMiniChat]);
+    if (showRedeemModal) {
+      commands.setOverlayInteractive(true);
+      setTimeout(() => redeemInputRef.current?.focus(), 100);
+    }
+    if (showRenameModal) {
+      commands.setOverlayInteractive(true);
+      setRenameInput(settings.name);
+      setTimeout(() => renameInputRef.current?.focus(), 100);
+    }
+  }, [showMiniChat, showRedeemModal, showRenameModal, settings.name]);
 
-  // Click 1 lần: Petting + Bật tắt Pose Bubbles
+  // Click 1 lần: Petting + Bật/tắt Pose Bubbles
   const handleSingleClick = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     setShowPoseBubbles(prev => !prev);
     setShowMenu(false);
+    setShowMiniChat(false);
+    setShowRedeemModal(false);
+    setShowRenameModal(false);
 
     // Tăng EXP và bắn tim
     const updated = addCatExp(5);
@@ -195,11 +233,18 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     setShowMiniChat(prev => !prev);
     setShowPoseBubbles(false);
     setShowMenu(false);
+    setShowRedeemModal(false);
+    setShowRenameModal(false);
     commands.setOverlayInteractive(true);
   };
 
   const handleCatClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    // Nếu vừa kéo thả chuột thì bỏ qua sự kiện click
+    if (hasMovedRef.current) {
+      hasMovedRef.current = false;
+      return;
+    }
     if (clickTimerRef.current) {
       clearTimeout(clickTimerRef.current);
       clickTimerRef.current = null;
@@ -266,14 +311,16 @@ export const CyberCat: React.FC<CyberCatProps> = ({
         await brain.executeAction(plan.action);
       }
 
-      // 4. Báo cáo hoàn tất
+      // 4. Báo cáo hoàn tất + thưởng 10 Treats và 15 EXP
       const doneClip = '39-idle-stand-alert-paw-wave';
       setCurrentClip(doneClip);
       loadClip(doneClip);
       const reply = plan.message || plan.thought || "Tác vụ đã hoàn tất!";
       triggerSpeech(reply, 8000);
-      const updated = addCatExp(15);
-      setSettings(updated);
+
+      const withExp = addCatExp(15);
+      const withTreats = addCatTreats(10);
+      setSettings(withTreats);
     } catch (err: any) {
       console.error("MiniChat error:", err);
       triggerSpeech(`Lỗi: ${err?.message || err}`, 6000);
@@ -282,12 +329,19 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     }
   };
 
-  const handleFeed = () => {
+  // Cho mèo ăn bánh thưởng (tiêu Treats)
+  const handleFeedTreat = () => {
     setShowMenu(false);
-    triggerSpeech("Măm măm... Cảm ơn anh đã cho em ăn hạt! 🐟", 4500);
-    loadClip('09-idle-sit-eat-bowl');
-    const updated = addCatExp(10);
+    const result = spendCatTreats(5);
+    if (!result.success) {
+      triggerSpeech("Anh ơi em hết bánh thưởng rồi! Nhập Redeem Code để nhận thêm Treats nhé! 🐟", 4500);
+      return;
+    }
+    setSettings(result.settings);
+    const updated = addCatExp(15);
     setSettings(updated);
+    triggerSpeech("Măm măm... Bánh thưởng thơm ngon quá! 🐟 (+15 EXP)", 4500);
+    loadClip('09-idle-sit-eat-bowl');
   };
 
   const handleDrink = () => {
@@ -310,39 +364,85 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     loadClip('39-idle-stand-alert-paw-wave');
   };
 
-  // Kéo thả vị trí
+  // Xử lý đổi tên mèo (Yêu cầu Lv. 10)
+  const handleRenameSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = renameCat(renameInput);
+    if (res.success) {
+      setSettings(res.settings);
+      setRenameMsg(null);
+      setShowRenameModal(false);
+      triggerSpeech(`Từ giờ hãy gọi em là ${res.settings.name} nha anh! Meow~ 💖`, 4500);
+    } else {
+      setRenameMsg(res.message);
+    }
+  };
+
+  // Xử lý nhập Redeem Code
+  const handleRedeemSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const res: RedeemResult = redeemCode(redeemInput);
+    if (res.success) {
+      setRedeemMsg({ text: res.message, success: true });
+      if (res.updatedSettings) setSettings(res.updatedSettings);
+      setRedeemInput('');
+      triggerSpeech("Yeah! Đã đổi mã nhận quà thành công! ✨", 4500);
+      loadClip('39-idle-stand-alert-paw-wave');
+    } else {
+      setRedeemMsg({ text: res.message, success: false });
+    }
+  };
+
+  // Kéo thả vị trí tự do như tab desktop
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return; // Chỉ kéo bằng chuột trái
-    setIsDragging(true);
-    setDragOffset({
-      x: e.clientX - settings.position.x,
-      y: e.clientY - settings.position.y
-    });
+    if (e.button !== 0) return; // Chỉ kéo chuột trái
+    isPointerDownRef.current = true;
+    hasMovedRef.current = false;
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: settings.position.x,
+      origY: settings.position.y
+    };
+    commands.setOverlayInteractive(true);
   };
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
-      const newX = Math.max(10, Math.min(window.innerWidth - 180, e.clientX - dragOffset.x));
-      const newY = Math.max(10, Math.min(window.innerHeight - 180, e.clientY - dragOffset.y));
-      const updated = { ...settings, position: { x: newX, y: newY } };
-      setSettings(updated);
-      saveStoredCatSettings(updated);
+      if (!isPointerDownRef.current) return;
+      const dx = e.clientX - dragStartRef.current.startX;
+      const dy = e.clientY - dragStartRef.current.startY;
+
+      // Ngưỡng di chuyển để xác định là đang kéo thả
+      if (!hasMovedRef.current && Math.hypot(dx, dy) > 3) {
+        hasMovedRef.current = true;
+        setIsDragging(true);
+      }
+
+      if (hasMovedRef.current) {
+        // Cho phép đặt tự do khắp màn hình
+        const newX = Math.max(-50, Math.min(window.innerWidth - 80, dragStartRef.current.origX + dx));
+        const newY = Math.max(0, Math.min(window.innerHeight - 80, dragStartRef.current.origY + dy));
+        setSettings(prev => ({ ...prev, position: { x: newX, y: newY } }));
+      }
     };
 
     const handleMouseUp = () => {
-      if (isDragging) setIsDragging(false);
+      if (!isPointerDownRef.current) return;
+      isPointerDownRef.current = false;
+      if (hasMovedRef.current) {
+        setIsDragging(false);
+        saveStoredCatSettings(settings);
+      }
     };
 
-    if (isDragging) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    }
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, dragOffset, settings]);
+  }, [settings]);
 
   // Bộ lọc màu Cyber
   const getColorFilter = () => {
@@ -363,21 +463,23 @@ export const CyberCat: React.FC<CyberCatProps> = ({
 
   if (!settings.enabled) return null;
 
-  const isAnyMenuOpen = showMenu || showPoseBubbles || showMiniChat;
+  const isAnyModalOpen = showMenu || showPoseBubbles || showMiniChat || showRedeemModal || showRenameModal;
 
   return (
     <div 
-      className="pointer-events-auto absolute select-none transition-all duration-75 ease-out"
+      className={`pointer-events-auto absolute select-none ${
+        isDragging ? 'cursor-grabbing transition-none' : 'transition-all duration-75 ease-out'
+      }`}
       style={{
         left: `${settings.position.x}px`,
         top: `${settings.position.y}px`,
-        transform: `scale(${settings.scale})`,
+        transform: `scale(${isDragging ? settings.scale * 1.05 : settings.scale})`,
         transformOrigin: 'bottom center',
         zIndex: 9999
       }}
       onMouseEnter={() => commands.setOverlayInteractive(true)}
       onMouseLeave={() => {
-        if (!isAnyMenuOpen && !isDragging) {
+        if (!isAnyModalOpen && !isDragging) {
           commands.setOverlayInteractive(false);
         }
       }}
@@ -432,7 +534,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
         </div>
       )}
 
-      {/* 4. Video Mèo Xanh Trong Suốt */}
+      {/* 4. Video Mèo Xanh Trong Suốt - Cầm kéo như Tab Desktop */}
       <div 
         className="relative cursor-grab active:cursor-grabbing group"
         onMouseDown={handleMouseDown}
@@ -442,6 +544,8 @@ export const CyberCat: React.FC<CyberCatProps> = ({
           setShowMenu(!showMenu);
           setShowPoseBubbles(false);
           setShowMiniChat(false);
+          setShowRedeemModal(false);
+          setShowRenameModal(false);
           commands.setOverlayInteractive(true);
         }}
       >
@@ -453,7 +557,9 @@ export const CyberCat: React.FC<CyberCatProps> = ({
             loop
             playsInline
             muted
-            className="w-48 h-48 object-contain pointer-events-auto transition-transform duration-200 group-hover:scale-105"
+            className={`w-48 h-48 object-contain pointer-events-auto transition-transform duration-200 ${
+              isDragging ? 'scale-105 drop-shadow-[0_20px_30px_rgba(0,0,0,0.6)]' : 'group-hover:scale-105'
+            }`}
             style={{
               filter: getColorFilter()
             }}
@@ -464,25 +570,32 @@ export const CyberCat: React.FC<CyberCatProps> = ({
           </div>
         )}
 
-        {/* Level Badge siêu nhỏ cạnh mèo */}
-        <div className="absolute bottom-2 right-4 flex items-center gap-1 rounded-full border border-cyan-500/40 bg-zinc-900/90 px-2 py-0.5 text-[10px] font-mono text-cyan-300 shadow-md backdrop-blur-sm">
+        {/* Level & Treats Badge */}
+        <div className="absolute bottom-2 right-2 flex items-center gap-1.5 rounded-full border border-cyan-500/40 bg-zinc-900/90 px-2 py-0.5 text-[10px] font-mono text-cyan-300 shadow-md backdrop-blur-sm">
           <span>Lv.{settings.bondLevel}</span>
+          <span className="text-zinc-600">•</span>
+          <span className="flex items-center gap-0.5 text-amber-300 font-semibold">
+            🐟 {settings.treats || 0}
+          </span>
         </div>
       </div>
 
-      {/* 5. Mini Bubble Chat Capsule (Hiển thị khi double click vào mèo) */}
+      {/* 5. Mini Bubble Chat Capsule (Bấm 2 lần vào mèo) */}
       {showMiniChat && (
         <div 
           className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-84 md:w-96 rounded-2xl border border-cyan-500/40 bg-zinc-950/92 p-3 shadow-[0_0_35px_rgba(0,240,255,0.3)] backdrop-blur-xl text-zinc-100 z-50 animate-in fade-in zoom-in-95 duration-200"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header thanh mini chat */}
+          {/* Header */}
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-800 text-[11px] font-semibold text-cyan-400">
             <span className="flex items-center gap-1.5">
               <MessageSquare className="h-3.5 w-3.5 text-cyan-400" />
               <span>Hỏi {settings.name} (Mini Agent Chat)</span>
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1 text-[10px] text-amber-300 font-mono">
+                🐟 {settings.treats || 0} Treats
+              </span>
               <button
                 onClick={() => {
                   setShowMiniChat(false);
@@ -506,7 +619,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
             </div>
           </div>
 
-          {/* Ô nhập Prompt Mini Capsule */}
+          {/* Ô nhập prompt */}
           <div className="relative flex items-center bg-zinc-900/90 rounded-xl border border-zinc-700/80 focus-within:border-cyan-400 focus-within:ring-1 focus-within:ring-cyan-400/50 px-3 py-1.5 text-xs transition">
             <input
               ref={miniChatInputRef}
@@ -567,40 +680,91 @@ export const CyberCat: React.FC<CyberCatProps> = ({
         </div>
       )}
 
-      {/* 6. Menu Tương Tác Chuột Phải */}
+      {/* 6. Quick Menu Chuột Phải của Orbis */}
       {showMenu && (
         <div 
-          className="absolute left-full top-0 ml-2 w-48 rounded-xl border border-zinc-700 bg-zinc-900/95 p-1.5 shadow-2xl backdrop-blur-xl text-zinc-200 z-50 text-xs animate-in fade-in zoom-in-95 duration-150"
+          className="absolute left-full top-0 ml-2 w-52 rounded-xl border border-zinc-700 bg-zinc-900/95 p-1.5 shadow-2xl backdrop-blur-xl text-zinc-200 z-50 text-xs animate-in fade-in zoom-in-95 duration-150"
           onClick={(e) => e.stopPropagation()}
         >
+          {/* Header Quick Menu */}
           <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-zinc-800 text-[11px] font-semibold text-cyan-400">
-            <span className="flex items-center gap-1.5">
-              <Sparkles className="h-3 w-3" /> {settings.name}
+            <span className="flex items-center gap-1.5 truncate">
+              <Sparkles className="h-3 w-3 text-cyan-400 shrink-0" />
+              <span className="truncate">{settings.name} (Lv.{settings.bondLevel})</span>
             </span>
-            <button 
-              onClick={() => {
-                setShowMenu(false);
-                commands.setOverlayInteractive(false);
-              }}
-              className="text-zinc-500 hover:text-white"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-[10px] text-amber-300 font-mono">🐟 {settings.treats || 0}</span>
+              <button 
+                onClick={() => {
+                  setShowMenu(false);
+                  commands.setOverlayInteractive(false);
+                }}
+                className="text-zinc-500 hover:text-white"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="py-1 space-y-0.5">
+            {/* Nút Cho mèo ngủ / Đánh thức */}
+            <button
+              onClick={handleSleep}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-indigo-500/20 hover:text-indigo-300 text-indigo-400 transition text-left font-medium"
+            >
+              <Moon className="h-3.5 w-3.5" />
+              <span>Cho mèo đi ngủ cuộn tròn 💤</span>
+            </button>
+
+            <button
+              onClick={handleWake}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-yellow-500/20 hover:text-yellow-300 text-yellow-400 transition text-left font-medium"
+            >
+              <Sun className="h-3.5 w-3.5" />
+              <span>Đánh thức mèo dậy ⚡</span>
+            </button>
+
+            <div className="my-1 border-t border-zinc-800" />
+
+            {/* Mở Mini Chat */}
             <button
               onClick={() => {
                 setShowMenu(false);
                 setShowMiniChat(true);
                 commands.setOverlayInteractive(true);
               }}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-cyan-500/20 hover:text-cyan-300 text-cyan-400 transition text-left font-medium"
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-cyan-500/20 hover:text-cyan-300 text-cyan-400 transition text-left"
             >
               <MessageSquare className="h-3.5 w-3.5" />
               <span>Mở Mini Bubble Chat</span>
             </button>
 
+            {/* Nhập Redeem Code */}
+            <button
+              onClick={() => {
+                setShowMenu(false);
+                setShowRedeemModal(true);
+                commands.setOverlayInteractive(true);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-amber-500/20 hover:text-amber-300 text-amber-400 transition text-left"
+            >
+              <Gift className="h-3.5 w-3.5" />
+              <span>Nhập Redeem Code (Nhận quà)</span>
+            </button>
+
+            {/* Thưởng bánh Treat */}
+            <button
+              onClick={handleFeedTreat}
+              className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 hover:bg-zinc-800 hover:text-amber-300 transition text-left"
+            >
+              <span className="flex items-center gap-2">
+                <Utensils className="h-3.5 w-3.5 text-amber-400" />
+                <span>Thưởng bánh Treat (+15 EXP)</span>
+              </span>
+              <span className="text-[10px] text-zinc-500">-5 🐟</span>
+            </button>
+
+            {/* Đổi tư thế */}
             <button
               onClick={() => {
                 setShowMenu(false);
@@ -610,9 +774,10 @@ export const CyberCat: React.FC<CyberCatProps> = ({
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-zinc-800 hover:text-cyan-300 transition text-left"
             >
               <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-              <span>Đổi tư thế mèo (Pose)</span>
+              <span>Đổi tư thế mèo (Pose Bubbles)</span>
             </button>
 
+            {/* Xoa đầu */}
             <button
               onClick={(e) => {
                 handleSingleClick(e);
@@ -621,39 +786,38 @@ export const CyberCat: React.FC<CyberCatProps> = ({
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-zinc-800 hover:text-pink-300 transition text-left"
             >
               <Heart className="h-3.5 w-3.5 text-pink-400" />
-              <span>Xoa đầu cưng nựng (+EXP)</span>
+              <span>Xoa đầu cưng nựng (+5 EXP)</span>
             </button>
 
+            {/* Đổi tên mèo (Yêu cầu Lv. 10) */}
             <button
-              onClick={handleFeed}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-zinc-800 hover:text-amber-300 transition text-left"
+              onClick={() => {
+                if (settings.bondLevel >= 10) {
+                  setShowMenu(false);
+                  setShowRenameModal(true);
+                  commands.setOverlayInteractive(true);
+                } else {
+                  triggerSpeech(`Cần đạt Thân thiết Lv.10 để đổi tên cho em nha anh! (Hiện tại: Lv.${settings.bondLevel}/10)`, 4500);
+                  setShowMenu(false);
+                }
+              }}
+              className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 transition text-left ${
+                settings.bondLevel >= 10 
+                  ? 'hover:bg-zinc-800 text-cyan-300 font-medium' 
+                  : 'text-zinc-500 hover:text-zinc-400'
+              }`}
             >
-              <Utensils className="h-3.5 w-3.5 text-amber-400" />
-              <span>Cho ăn hạt</span>
-            </button>
-
-            <button
-              onClick={handleDrink}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-zinc-800 hover:text-cyan-300 transition text-left"
-            >
-              <Droplets className="h-3.5 w-3.5 text-cyan-400" />
-              <span>Uống nước mát</span>
-            </button>
-
-            <button
-              onClick={handleSleep}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-zinc-800 hover:text-indigo-300 transition text-left"
-            >
-              <Moon className="h-3.5 w-3.5 text-indigo-400" />
-              <span>Bảo mèo đi ngủ cuộn tròn</span>
-            </button>
-
-            <button
-              onClick={handleWake}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-zinc-800 hover:text-yellow-300 transition text-left"
-            >
-              <Sun className="h-3.5 w-3.5 text-yellow-400" />
-              <span>Đánh thức mèo dậy</span>
+              <span className="flex items-center gap-2">
+                {settings.bondLevel >= 10 ? (
+                  <Edit3 className="h-3.5 w-3.5 text-cyan-400" />
+                ) : (
+                  <Lock className="h-3.5 w-3.5 text-zinc-500" />
+                )}
+                <span>Đổi tên Mèo</span>
+              </span>
+              <span className="text-[10px] font-mono text-zinc-500">
+                {settings.bondLevel >= 10 ? 'Mở khóa' : `Lv.${settings.bondLevel}/10`}
+              </span>
             </button>
 
             <div className="my-1 border-t border-zinc-800" />
@@ -662,9 +826,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
               onClick={() => {
                 setShowMenu(false);
                 if (onOpenTeach) onOpenTeach();
-                else {
-                  commands.openDashboard().catch(() => {});
-                }
+                else commands.openDashboard().catch(() => {});
               }}
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-cyan-500/10 hover:text-cyan-300 text-cyan-400 transition text-left font-medium"
             >
@@ -683,6 +845,112 @@ export const CyberCat: React.FC<CyberCatProps> = ({
               <span>Mở Dashboard Agent</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 7. Modal Nhập Redeem Code */}
+      {showRedeemModal && (
+        <div 
+          className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-80 rounded-2xl border border-amber-500/40 bg-zinc-950/95 p-3.5 shadow-[0_0_35px_rgba(245,158,11,0.25)] backdrop-blur-xl text-zinc-100 z-50 animate-in fade-in zoom-in-95 duration-200"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-800 text-xs font-semibold text-amber-400">
+            <span className="flex items-center gap-1.5">
+              <Gift className="h-4 w-4" />
+              <span>Nhập Mã Đổi Thưởng (Redeem)</span>
+            </span>
+            <button 
+              onClick={() => {
+                setShowRedeemModal(false);
+                setRedeemMsg(null);
+                commands.setOverlayInteractive(false);
+              }}
+              className="text-zinc-500 hover:text-white p-0.5"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <form onSubmit={handleRedeemSubmit} className="space-y-2">
+            <div className="relative">
+              <input
+                ref={redeemInputRef}
+                type="text"
+                placeholder="Nhập mã (ví dụ: orbis-welcome-2026)..."
+                value={redeemInput}
+                onChange={(e) => setRedeemInput(e.target.value)}
+                className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-400 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-zinc-500 focus:outline-none"
+              />
+            </div>
+
+            {redeemMsg && (
+              <div className={`p-2 rounded-lg text-[11px] ${
+                redeemMsg.success 
+                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300' 
+                  : 'bg-red-500/10 border border-red-500/30 text-red-300'
+              }`}>
+                {redeemMsg.text}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={!redeemInput.trim()}
+              className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-zinc-950 font-bold py-1.5 rounded-xl text-xs transition shadow"
+            >
+              Đổi mã nhận quà
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* 8. Modal Đổi Tên Mèo (Khi đạt Lv. 10) */}
+      {showRenameModal && (
+        <div 
+          className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-72 rounded-2xl border border-cyan-500/40 bg-zinc-950/95 p-3.5 shadow-[0_0_35px_rgba(0,240,255,0.25)] backdrop-blur-xl text-zinc-100 z-50 animate-in fade-in zoom-in-95 duration-200"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-zinc-800 text-xs font-semibold text-cyan-400">
+            <span className="flex items-center gap-1.5">
+              <Edit3 className="h-4 w-4" />
+              <span>Đổi tên Mèo (Mở khóa Lv.10)</span>
+            </span>
+            <button 
+              onClick={() => {
+                setShowRenameModal(false);
+                setRenameMsg(null);
+                commands.setOverlayInteractive(false);
+              }}
+              className="text-zinc-500 hover:text-white p-0.5"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <form onSubmit={handleRenameSubmit} className="space-y-2">
+            <input
+              ref={renameInputRef}
+              type="text"
+              placeholder="Nhập tên mới cho mèo..."
+              value={renameInput}
+              onChange={(e) => setRenameInput(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-700 focus:border-cyan-400 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none"
+            />
+
+            {renameMsg && (
+              <div className="p-2 rounded-lg text-[11px] bg-red-500/10 border border-red-500/30 text-red-300">
+                {renameMsg}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={!renameInput.trim()}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-zinc-950 font-bold py-1.5 rounded-xl text-xs transition shadow"
+            >
+              Lưu tên mới
+            </button>
+          </form>
         </div>
       )}
     </div>
