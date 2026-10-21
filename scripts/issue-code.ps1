@@ -4,7 +4,8 @@
 .DESCRIPTION
     Tạo mã ngẫu nhiên dạng orbis-xxxx-yyyy hoặc mã tự chọn.
     Chỉ định phần thưởng: Treats, EXP, và Kỹ năng độc quyền (copy từ app hoặc tạo mới).
-    Ghi trực tiếp vào src/data/redeemCodes.json và lưu bản xuất generated-codes.txt.
+    Tự động mã hóa toàn bộ dữ liệu bằng AES-256 và chèn vào biến ENCRYPTED_REDEEM_VAULT
+    trong src/services/redeemService.ts trước khi đẩy lên GitHub.
 .EXAMPLE
     .\scripts\issue-code.ps1
     .\scripts\issue-code.ps1 -Count 5 -Treats 200 -Exp 50
@@ -29,8 +30,9 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
-$codesJsonPath = Join-Path $projectRoot "src\data\redeemCodes.json"
+$redeemServicePath = Join-Path $projectRoot "src\services\redeemService.ts"
 $outputTxtPath = Join-Path $projectRoot "generated-codes.txt"
+$vaultSalt = "orbis_master_vault_key_2026"
 
 function Generate-RandomCode {
     $chars = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -39,13 +41,61 @@ function Generate-RandomCode {
     return "orbis-$part1-$part2"
 }
 
+function Decrypt-Vault ([string]$b64Cipher, [string]$salt) {
+    if ([string]::IsNullOrWhiteSpace($b64Cipher)) { return @() }
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $key = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($salt))
+        $ivHash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($salt + "::orbis_iv_salt_2026"))
+        $iv = New-Object byte[] 16
+        [Array]::Copy($ivHash, 0, $iv, 0, 16)
+
+        $aes = [System.Security.Cryptography.Aes]::Create()
+        $aes.Key = $key
+        $aes.IV = $iv
+        $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+        $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
+
+        $cipherBytes = [Convert]::FromBase64String($b64Cipher)
+        $dec = $aes.CreateDecryptor()
+        $decryptedBytes = $dec.TransformFinalBlock($cipherBytes, 0, $cipherBytes.Length)
+        $jsonStr = [System.Text.Encoding]::UTF8.GetString($decryptedBytes)
+        $parsed = $jsonStr | ConvertFrom-Json
+        if ($null -eq $parsed) { return @() }
+        return @($parsed)
+    } catch {
+        Write-Warning "Không thể giải mã Vault cũ, sẽ khởi tạo danh sách mới: $_"
+        return @()
+    }
+}
+
+function Encrypt-Vault ($codesList, [string]$salt) {
+    $json = $codesList | ConvertTo-Json -Depth 6
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $key = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($salt))
+    $ivHash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($salt + "::orbis_iv_salt_2026"))
+    $iv = New-Object byte[] 16
+    [Array]::Copy($ivHash, 0, $iv, 0, 16)
+
+    $aes = [System.Security.Cryptography.Aes]::Create()
+    $aes.Key = $key
+    $aes.IV = $iv
+    $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+    $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
+
+    $plainBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $enc = $aes.CreateEncryptor()
+    $cipherBytes = $enc.TransformFinalBlock($plainBytes, 0, $plainBytes.Length)
+    return [Convert]::ToBase64String($cipherBytes)
+}
+
 # Nếu chạy không tham số hoặc có cờ -Interactive, bật wizard hỏi đáp
 if ($PSBoundParameters.Count -eq 0 -or $Interactive) {
     Clear-Host
     Write-Host "============================================================" -ForegroundColor Cyan
     Write-Host " 🐾 ORBIS AGENT - CÔNG CỤ CẤP MÃ REDEEM CODE (CREATOR TOOL) 👑" -ForegroundColor Yellow
     Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "Chỉ có bạn (Creator) mới có quyền tạo mã cấp Skill và Treats.`n" -ForegroundColor Gray
+    Write-Host "Mọi mã phát hành sẽ tự động được MÃ HÓA AES-256 vào file mã nguồn`ntrước khi đẩy lên GitHub để bảo vệ bản quyền.`n" -ForegroundColor Gray
 
     Write-Host "Chọn kiểu tạo mã:" -ForegroundColor White
     Write-Host " [1] Tạo mã ngẫu nhiên dạng 'orbis-xxxx-yyyy' (khuyên dùng khi phát hành hàng loạt)" -ForegroundColor Green
@@ -139,19 +189,18 @@ if ($PSBoundParameters.Count -eq 0 -or $Interactive) {
     }
 }
 
-# Đọc file redeemCodes.json hiện tại
-$currentCodes = @()
-if (Test-Path $codesJsonPath) {
-    try {
-        $jsonContent = Get-Content -Path $codesJsonPath -Raw -Encoding UTF8
-        $currentCodes = $jsonContent | ConvertFrom-Json
-        if ($null -eq $currentCodes) { $currentCodes = @() }
-    } catch {
-        $currentCodes = @()
-    }
+# Đọc file src/services/redeemService.ts và giải mã ENCRYPTED_REDEEM_VAULT hiện tại
+if (-not (Test-Path $redeemServicePath)) {
+    throw "Không tìm thấy file $redeemServicePath"
 }
 
-$newCodesList = @()
+$serviceContent = [System.IO.File]::ReadAllText($redeemServicePath, [System.Text.Encoding]::UTF8)
+$existingVaultB64 = ""
+if ($serviceContent -match 'export const ENCRYPTED_REDEEM_VAULT = "([^"]+)";') {
+    $existingVaultB64 = $matches[1]
+}
+
+$currentCodes = @(Decrypt-Vault $existingVaultB64 $vaultSalt)
 $generatedCodeStrings = @()
 
 for ($i = 0; $i -lt $Count; $i++) {
@@ -184,18 +233,22 @@ for ($i = 0; $i -lt $Count; $i++) {
         }
     }
 
-    # Kiểm tra tránh trùng code trong danh sách
+    # Tránh trùng mã cũ
     $currentCodes = @($currentCodes | Where-Object { $_.code -ne $thisCode })
     $currentCodes += [PSCustomObject]$codeObj
-    $newCodesList += [PSCustomObject]$codeObj
     $generatedCodeStrings += $thisCode
 }
 
-# Ghi lại vào redeemCodes.json
-$updatedJson = $currentCodes | ConvertTo-Json -Depth 5
-[System.IO.File]::WriteAllText($codesJsonPath, $updatedJson, [System.Text.Encoding]::UTF8)
+# Mã hóa toàn bộ danh sách thành 1 chuỗi duy nhất bằng AES-256
+$newEncryptedVault = Encrypt-Vault $currentCodes $vaultSalt
 
-# Xuất ra file generated-codes.txt
+# Thay thế biến duy nhất ENCRYPTED_REDEEM_VAULT trong src/services/redeemService.ts
+$pattern = 'export const ENCRYPTED_REDEEM_VAULT = "[^"]*";'
+$replacement = "export const ENCRYPTED_REDEEM_VAULT = `"$newEncryptedVault`";"
+$updatedServiceContent = [System.Text.RegularExpressions.Regex]::Replace($serviceContent, $pattern, $replacement)
+[System.IO.File]::WriteAllText($redeemServicePath, $updatedServiceContent, [System.Text.Encoding]::UTF8)
+
+# Xuất file danh sách rõ (chỉ lưu cục bộ cho Creator copy)
 $exportText = @"
 ============================================================
 🐾 DANH SÁCH MÃ REDEEM CODE VỪA TẠO - $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
@@ -217,8 +270,9 @@ HƯỚNG DẪN NGƯỜI DÙNG NHẬP MÃ:
 
 [System.IO.File]::WriteAllText($outputTxtPath, $exportText, [System.Text.Encoding]::UTF8)
 
-Write-Host "`n✅ ĐÃ TẠO THÀNH CÔNG $($Count) MÃ REDEEM CODE!" -ForegroundColor Green
-Write-Host "Các mã vừa tạo:" -ForegroundColor Yellow
+Write-Host "`n🔒 ĐÃ MÃ HÓA & CẬP NHẬT BIẾN 'ENCRYPTED_REDEEM_VAULT' TRONG REDEEMSERVICE.TS!" -ForegroundColor Green
+Write-Host "Tổng số mã đang được lưu trữ trong Vault mã hóa: $($currentCodes.Count)" -ForegroundColor Cyan
+Write-Host "`nCác mã vừa tạo:" -ForegroundColor Yellow
 foreach ($c in $generatedCodeStrings) {
     Write-Host "  👉 $c" -ForegroundColor Cyan
 }
@@ -229,7 +283,5 @@ if (![string]::IsNullOrWhiteSpace($SkillName)) {
     Write-Host "   Hành động AI: $SkillPrompt" -ForegroundColor Gray
 }
 
-Write-Host "`n📁 Đã lưu vào:" -ForegroundColor White
-Write-Host "   1. Ứng dụng: $codesJsonPath" -ForegroundColor Gray
-Write-Host "   2. File xuất: $outputTxtPath" -ForegroundColor Gray
-Write-Host "Người dùng chỉ cần nhập mã trên là nhận được ngay!`n" -ForegroundColor Green
+Write-Host "`n📁 Tệp xuất chỉ lưu trên máy bạn: $outputTxtPath" -ForegroundColor Gray
+Write-Host "Khi push lên GitHub, toàn bộ mã sẽ được che giấu trong biến mã hóa duy nhất!`n" -ForegroundColor Green

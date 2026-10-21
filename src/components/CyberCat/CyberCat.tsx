@@ -379,9 +379,9 @@ export const CyberCat: React.FC<CyberCatProps> = ({
   };
 
   // Xử lý nhập Redeem Code
-  const handleRedeemSubmit = (e: React.FormEvent) => {
+  const handleRedeemSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res: RedeemResult = redeemCode(redeemInput);
+    const res: RedeemResult = await redeemCode(redeemInput);
     if (res.success) {
       setRedeemMsg({ text: res.message, success: true });
       if (res.updatedSettings) setSettings(res.updatedSettings);
