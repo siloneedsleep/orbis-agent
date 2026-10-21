@@ -37,14 +37,18 @@ pub struct ModelInfo {
 }
 
 pub fn spawn_ollama_process() -> Result<(), String> {
-    let mut candidates = vec!["ollama".to_string()];
+    let mut candidates = Vec::new();
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
         candidates.push(format!("{local_app_data}\\Programs\\Ollama\\ollama.exe"));
     }
+    candidates.push("ollama.exe".to_string());
+    candidates.push("ollama".to_string());
 
     for bin in candidates {
         let spawned = Command::new(&bin)
             .arg("serve")
+            .env("OLLAMA_ORIGINS", "*")
+            .env("OLLAMA_HOST", "127.0.0.1:11434")
             .creation_flags(CREATE_NO_WINDOW)
             .spawn();
         if spawned.is_ok() {
@@ -80,11 +84,17 @@ pub async fn start_ollama_server() -> Result<String, String> {
 
 async fn installed(c: &reqwest::Client) -> Result<Vec<ModelInfo>, String> {
     let base = get_base_url();
-    let resp = c
-        .get(format!("{base}/api/tags"))
-        .send()
-        .await
-        .map_err(|e| format!("Không kết nối được Ollama ({base}): {e}"))?;
+    let resp = match c.get(format!("{base}/api/tags")).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = spawn_ollama_process();
+            std::thread::sleep(Duration::from_millis(1200));
+            c.get(format!("{base}/api/tags"))
+                .send()
+                .await
+                .map_err(|e2| format!("Không kết nối được Ollama ({base}): {e} -> {e2}"))?
+        }
+    };
     let v: Value = resp.json().await.map_err(|e| e.to_string())?;
 
     Ok(v["models"]
@@ -139,12 +149,18 @@ fn make_options(model_ctx: Option<u64>) -> Value {
 
 async fn send_chat(c: &reqwest::Client, body: &Value) -> Result<Value, String> {
     let base = get_base_url();
-    let resp = c
-        .post(format!("{base}/api/chat"))
-        .json(body)
-        .send()
-        .await
-        .map_err(|e| format!("Không kết nối được Ollama ({base}): {e}"))?;
+    let resp = match c.post(format!("{base}/api/chat")).json(body).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = spawn_ollama_process();
+            std::thread::sleep(Duration::from_millis(1500));
+            c.post(format!("{base}/api/chat"))
+                .json(body)
+                .send()
+                .await
+                .map_err(|e2| format!("Không kết nối được Ollama ({base}): {e} -> {e2}"))?
+        }
+    };
     let status = resp.status();
     let v: Value = resp.json().await.map_err(|e| e.to_string())?;
     if status.is_success() {
