@@ -10,7 +10,7 @@ function resolveCloudFallbackConfig(current: LLMConfig | null): LLMConfig | null
   }> = [
     { provider: 'deepseek', defaultModel: 'deepseek-chat' },
     { provider: 'gemini', defaultModel: 'gemini-2.0-flash' },
-    { provider: 'openai', defaultModel: 'gpt-4o' },
+    { provider: 'openai', defaultModel: 'gpt-4o-mini' },
     { provider: 'claude', defaultModel: 'claude-3-5-sonnet-20241022' },
   ];
 
@@ -66,23 +66,23 @@ export async function planStepWithHybridFallback(
     const errMsg = String(primaryErr?.message || primaryErr || '');
     console.warn(`[HybridFallback] Bước suy luận chính (${isLocal ? 'Local' : 'Cloud'}) gặp lỗi:`, errMsg);
 
-    // Trường hợp 1: Đang ở chế độ Local mà gặp lỗi kết nối/timeout -> thử dự phòng sang Cloud nếu có API Key hợp lệ
+    // Trường hợp 1: Đang ở chế độ Local mà gặp lỗi -> thử dự phòng sang Cloud nếu có API Key hợp lệ
     if (isLocal) {
       const cloudFallback = resolveCloudFallbackConfig(latestConfig);
       if (cloudFallback) {
-        console.info(`[HybridFallback] Chuyển hướng dự phòng từ Local Ollama sang Cloud (${cloudFallback.provider})...`);
-        const step = await brain.planNextMove(goal, screenContext, cloudFallback);
-        return { ...step, usedFallback: true };
+        try {
+          console.info(`[HybridFallback] Chuyển hướng dự phòng từ Local Ollama sang Cloud (${cloudFallback.provider})...`);
+          const step = await brain.planNextMove(goal, screenContext, cloudFallback);
+          return { ...step, usedFallback: true };
+        } catch (cloudErr) {
+          console.warn("[HybridFallback] Cloud dự phòng cũng thất bại:", cloudErr);
+        }
       }
     }
-    // Trường hợp 2: Đang ở chế độ Cloud mà gặp lỗi 429 Rate Limit hoặc lỗi mạng -> thử dự phòng sang Local Ollama
+    // Trường hợp 2: Đang ở chế độ Cloud mà gặp bất kỳ lỗi nào (thiếu key, hết hạn, 402, 429, mất mạng...) -> tự động dự phòng sang Local Ollama
     else {
-      const isRateLimitOrNetwork =
-        errMsg.includes('429') ||
-        /rate limit|quota|timeout|network|failed to fetch/i.test(errMsg);
-
-      if (isRateLimitOrNetwork) {
-        console.info("[HybridFallback] Cloud API bị giới hạn (429/Network), chuyển hướng dự phòng sang Local Ollama...");
+      try {
+        console.info("[HybridFallback] Cloud API gặp sự cố, tự động chuyển hướng dự phòng sang Local Ollama...");
         const localFallback: LLMConfig = {
           type: 'local',
           mode: 'local',
@@ -93,6 +93,8 @@ export async function planStepWithHybridFallback(
         };
         const step = await brain.planNextMove(goal, screenContext, localFallback);
         return { ...step, usedFallback: true };
+      } catch (localErr) {
+        console.warn("[HybridFallback] Local Ollama dự phòng cũng thất bại:", localErr);
       }
     }
 
@@ -170,4 +172,3 @@ export class OrbisOrchestrator {
     this.isRunning = false;
   }
 }
-

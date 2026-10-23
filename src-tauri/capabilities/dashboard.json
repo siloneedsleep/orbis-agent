@@ -4,6 +4,7 @@
   "description": "Dashboard permissions",
   "windows": ["dashboard"],
   "permissions": [
+    "core:default",
     "core:event:default"
   ]
 }

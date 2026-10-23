@@ -53,6 +53,11 @@ export interface OllamaOptions {
   maxPower?: boolean;
 }
 
+export interface KeyValidationResult {
+  valid: boolean;
+  error?: string;
+}
+
 export const commands = {
   getOverlayLayout: () => invoke<OverlayLayout>("get_overlay_layout"),
   setOverlayInteractive: (enabled: boolean) => invoke<void>("set_overlay_interactive", { enabled }),
@@ -87,6 +92,27 @@ export const commands = {
       system: opts.system ?? null,
       model: opts.model ?? null,
       images: opts.images ?? null,
+    }),
+  validateCloudApiKey: (provider: string, apiKey: string) =>
+    invoke<KeyValidationResult>("validate_cloud_api_key", {
+      provider,
+      apiKey,
+    }),
+  cloudLlmChat: (params: {
+    provider: string;
+    apiKey: string;
+    model?: string;
+    systemPrompt: string;
+    userPrompt: string;
+    imageBase64?: string;
+  }) =>
+    invoke<OllamaReply>("cloud_llm_chat", {
+      provider: params.provider,
+      apiKey: params.apiKey,
+      model: params.model ?? null,
+      systemPrompt: params.systemPrompt,
+      userPrompt: params.userPrompt,
+      imageBase64: params.imageBase64 ?? null,
     }),
   startSandboxVm: () => invoke<string>("start_sandbox_vm"),
   createSandboxCheckpoint: (snapshotName: string) => invoke<string>("create_sandbox_checkpoint", { snapshotName }),

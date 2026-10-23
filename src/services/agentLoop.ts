@@ -55,6 +55,12 @@ export class AgentBrain {
       }
       if (typeof parsed.message === "string" && parsed.message.trim()) {
         message = parsed.message.trim();
+      } else if (typeof parsed.response === "string" && parsed.response.trim()) {
+        message = parsed.response.trim();
+      } else if (typeof parsed.reply === "string" && parsed.reply.trim()) {
+        message = parsed.reply.trim();
+      } else if (typeof parsed.answer === "string" && parsed.answer.trim()) {
+        message = parsed.answer.trim();
       }
 
       // 2. Cơ chế tương thích ngược: nếu có trường `action` nhưng thiếu trường `type`
@@ -118,6 +124,8 @@ export class AgentBrain {
           const doneMsg =
             typeof parsed.message === 'string' && parsed.message.trim()
               ? parsed.message.trim()
+              : message !== "Đã hoàn thành."
+              ? message
               : thought || 'Hoàn tất bước này.';
           message = doneMsg;
           action = { type: 'done', message: doneMsg };
@@ -127,6 +135,10 @@ export class AgentBrain {
           const fallbackMsg =
             typeof parsed.message === 'string' && parsed.message.trim()
               ? parsed.message.trim()
+              : message !== "Đã hoàn thành."
+              ? message
+              : thought !== "Đang xử lý yêu cầu..."
+              ? thought
               : 'Hoàn tất bước này.';
           message = fallbackMsg;
           action = { type: 'done', message: fallbackMsg };
@@ -148,19 +160,23 @@ export class AgentBrain {
   ): Promise<AgentStepResult> {
     const config = overrideConfig || getStoredLLMConfig();
     const systemPrompt = this.getSystemPrompt();
-    const userInstruction = `Yêu cầu hiện tại của người dùng: "${userPrompt}"\nHãy phân tích màn hình (nếu có) và trả về DUY NHẤT 1 JSON object có khóa "type" khớp định nghĩa AgentAction.`;
+    const userInstruction =
+      `Yêu cầu hiện tại của người dùng: "${userPrompt}"\n` +
+      `Hãy trả về DUY NHẤT 1 JSON object hợp lệ có khóa "type" ("done" | "mouse_move" | "mouse_click" | "keyboard_type" | "sandbox_exec"), "thought" và "message".\n` +
+      `Ví dụ nếu trả lời hoặc báo cáo kết quả: {"type": "done", "thought": "Đã phân tích yêu cầu của người dùng", "message": "Nội dung câu trả lời chi tiết tại đây"}`;
 
     let replyContent = "";
     const isLocalMode = !config || config.mode === 'local' || config.type === 'local' || config.provider === 'ollama';
 
     // 1. Local Ollama (Mode === "local")
     if (isLocalMode) {
+      const rawLocalModel = config?.localModel || config?.model;
       const targetModel =
-        !config?.localModel && !config?.model
+        !rawLocalModel ||
+        rawLocalModel === 'auto' ||
+        /^(deepseek|gemini|gpt-|claude)/i.test(rawLocalModel)
           ? undefined
-          : (config.localModel || config.model) === 'auto'
-          ? undefined
-          : config.localModel || config.model;
+          : rawLocalModel;
       const isVision = targetModel ? /vision|vl|llava|minicpm|bakllava/i.test(targetModel) : false;
 
       const userMsg: any = { role: 'user', content: userInstruction };
@@ -174,27 +190,44 @@ export class AgentBrain {
       ];
 
       try {
-        // Ưu tiên gọi qua IPC Rust (tránh CORS trên WebView, đã ép stream: false & format: "json")
+        // Ưu tiên gọi qua IPC Rust (tránh CORS trên WebView, tự khớp model và đặt num_ctx: 4096 an toàn)
         const res = await commands.ollamaChat(msgs, {
           model: targetModel,
           maxPower: config?.maxPower ?? true,
         });
         replyContent = res.content;
-      } catch (ipcErr) {
+      } catch (ipcErr: any) {
         console.warn("IPC ollamaChat gặp lỗi, thử gọi HTTP fallback tới 127.0.0.1:11434/api/chat...", ipcErr);
         try {
           await commands.startOllamaServer().catch(() => {});
+          let resolvedHttpModel = targetModel;
+          if (!resolvedHttpModel) {
+            const tagsRes = await fetch("http://127.0.0.1:11434/api/tags");
+            if (tagsRes.ok) {
+              const tagsData = await tagsRes.json();
+              const modelsList: any[] = tagsData?.models || [];
+              const nonEmbed = modelsList.filter((m) => !String(m?.name || '').toLowerCase().includes('embed'));
+              const preferred =
+                nonEmbed.find((m) => !String(m?.name || '').startsWith('hf.co/')) ||
+                nonEmbed[0] ||
+                modelsList[0];
+              if (preferred?.name) {
+                resolvedHttpModel = preferred.name;
+              }
+            }
+          }
+
           const httpRes = await fetch("http://127.0.0.1:11434/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              model: targetModel || "llama3",
-              messages: msgs,
+              model: resolvedHttpModel || "qwen2.5-coder:14b",
+              messages: msgs.map((m) => ({ role: m.role, content: m.content })),
               stream: false,
               format: "json",
               options: {
                 num_gpu: 999,
-                num_ctx: 32768,
+                num_ctx: 4096,
                 temperature: 0.2,
               },
             }),
@@ -205,17 +238,78 @@ export class AgentBrain {
           const data = await httpRes.json();
           replyContent = data?.message?.content || "";
         } catch (retryErr: any) {
-          throw new Error(`Không gọi được Local Ollama: ${ipcErr || retryErr?.message || retryErr}`);
+          throw new Error(`Không gọi được Local Ollama: ${ipcErr?.message || ipcErr || retryErr?.message || retryErr}`);
         }
       }
     }
-    // 2. Cloud API: Gemini
-    else if (config.provider === 'gemini') {
-      const apiKey = (config.apiKey || localStorage.getItem('orbis_gemini_key') || '').trim();
-      if (!apiKey) throw new Error("Chưa cấu hình Gemini API Key trong Cài đặt");
+    // 2. Cloud API (Gemini / OpenAI / Claude / DeepSeek) -> Ưu tiên đi qua Rust Backend (cloudLlmChat)
+    else {
+      const provider = config.provider;
+      const storageKeyName = `orbis_${provider}_key`;
+      const apiKey = (
+        config.apiKey ||
+        (typeof window !== 'undefined' ? localStorage.getItem(storageKeyName) : '') ||
+        ''
+      ).trim();
 
-      const rawModel = config.cloudModel || config.model || "gemini-2.0-flash";
-      const model = rawModel.replace(/^models\//, "");
+      if (!apiKey) {
+        throw new Error(`Chưa cấu hình ${provider.toUpperCase()} API Key trong Cài đặt`);
+      }
+
+      const requestedModel = config.cloudModel || config.model;
+
+      try {
+        const cloudRes = await commands.cloudLlmChat({
+          provider,
+          apiKey,
+          model: requestedModel,
+          systemPrompt,
+          userPrompt: userInstruction,
+          imageBase64: provider === 'deepseek' ? undefined : screenBase64,
+        });
+        replyContent = cloudRes.content;
+      } catch (rustCloudErr: any) {
+        const errStr = String(rustCloudErr?.message || rustCloudErr || '');
+        // Nếu lỗi là lỗi xác thực / hết tiền / rate limit từ API thật, ném ra ngay để HybridFallback xử lý
+        if (
+          errStr.includes('429') ||
+          errStr.includes('402') ||
+          errStr.includes('401') ||
+          errStr.includes('403') ||
+          errStr.includes('API Error') ||
+          errStr.includes('Insufficient Balance')
+        ) {
+          throw new Error(errStr);
+        }
+
+        console.warn(`[agentLoop] IPC cloudLlmChat (${provider}) lỗi, thử gọi WebView fetch fallback:`, errStr);
+        replyContent = await this.callCloudFetchFallback(
+          provider,
+          apiKey,
+          requestedModel,
+          systemPrompt,
+          userInstruction,
+          screenBase64
+        );
+      }
+    }
+
+    return this.preprocessAndParseLLMOutput(replyContent);
+  }
+
+  private async callCloudFetchFallback(
+    provider: string,
+    apiKey: string,
+    rawModel: string | undefined,
+    systemPrompt: string,
+    userInstruction: string,
+    screenBase64?: string
+  ): Promise<string> {
+    if (provider === 'gemini') {
+      const model =
+        rawModel && rawModel.toLowerCase().includes('gemini')
+          ? rawModel.replace(/^models\//, '')
+          : 'gemini-2.0-flash';
       const encodedKey = encodeURIComponent(apiKey);
       const parts: any[] = [{ text: userInstruction }];
 
@@ -232,13 +326,9 @@ export class AgentBrain {
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodedKey}`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            systemInstruction: {
-              parts: [{ text: systemPrompt }],
-            },
+            systemInstruction: { parts: [{ text: systemPrompt }] },
             contents: [{ role: 'user', parts }],
             generationConfig: {
               responseMimeType: "application/json",
@@ -248,26 +338,21 @@ export class AgentBrain {
         }
       );
 
-      if (res.status === 429) {
-        throw new Error("429 Rate Limit: Gemini API đã chạm giới hạn tần suất.");
-      }
+      if (res.status === 429) throw new Error("429 Rate Limit: Gemini API đã chạm giới hạn tần suất.");
       const data = await res.json();
       if (data.error) throw new Error(data.error.message || `Gemini API Error (${res.status})`);
-      replyContent = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
     }
-    // 3. Cloud API: OpenAI
-    else if (config.provider === 'openai') {
-      const apiKey = (config.apiKey || localStorage.getItem('orbis_openai_key') || '').trim();
-      if (!apiKey) throw new Error("Chưa cấu hình OpenAI API Key trong Cài đặt");
 
+    if (provider === 'openai') {
+      const model =
+        rawModel && /^(gpt-|o1|o3|o4|chatgpt)/i.test(rawModel) ? rawModel : 'gpt-4o-mini';
       const userContent: any[] = [{ type: "text", text: userInstruction }];
       if (screenBase64) {
         const cleanB64 = screenBase64.replace(/^data:image\/[a-z]+;base64,/, '');
         userContent.push({
           type: "image_url",
-          image_url: {
-            url: `data:image/png;base64,${cleanB64}`,
-          },
+          image_url: { url: `data:image/png;base64,${cleanB64}` },
         });
       }
 
@@ -278,7 +363,7 @@ export class AgentBrain {
           "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: config.cloudModel || config.model || "gpt-4o",
+          model,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userContent },
@@ -288,18 +373,17 @@ export class AgentBrain {
         }),
       });
 
-      if (res.status === 429) {
-        throw new Error("429 Rate Limit: OpenAI API đã chạm giới hạn tần suất.");
-      }
+      if (res.status === 429) throw new Error("429 Rate Limit: OpenAI API đã chạm giới hạn tần suất.");
       const data = await res.json();
       if (data.error) throw new Error(data.error.message || "OpenAI API Error");
-      replyContent = data.choices?.[0]?.message?.content || "";
+      return data.choices?.[0]?.message?.content || "";
     }
-    // 4. Cloud API: Claude (Anthropic)
-    else if (config.provider === 'claude') {
-      const apiKey = (config.apiKey || localStorage.getItem('orbis_claude_key') || '').trim();
-      if (!apiKey) throw new Error("Chưa cấu hình Claude API Key trong Cài đặt");
 
+    if (provider === 'claude') {
+      const model =
+        rawModel && rawModel.toLowerCase().startsWith('claude-')
+          ? rawModel
+          : 'claude-3-5-sonnet-20241022';
       const contentParts: any[] = [];
       if (screenBase64) {
         contentParts.push({
@@ -322,25 +406,24 @@ export class AgentBrain {
           "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: config.cloudModel || config.model || "claude-3-5-sonnet-20241022",
+          model,
           max_tokens: 4096,
           system: systemPrompt,
           messages: [{ role: "user", content: contentParts }],
         }),
       });
 
-      if (res.status === 429) {
-        throw new Error("429 Rate Limit: Claude API đã chạm giới hạn tần suất.");
-      }
+      if (res.status === 429) throw new Error("429 Rate Limit: Claude API đã chạm giới hạn tần suất.");
       const data = await res.json();
       if (data.error) throw new Error(data.error.message || "Claude API Error");
-      replyContent = data.content?.[0]?.text || "";
+      return data.content?.[0]?.text || "";
     }
-    // 5. Cloud API: DeepSeek
-    else if (config.provider === 'deepseek') {
-      const apiKey = (config.apiKey || localStorage.getItem('orbis_deepseek_key') || '').trim();
-      if (!apiKey) throw new Error("Chưa cấu hình DeepSeek API Key trong Cài đặt");
 
+    if (provider === 'deepseek') {
+      const model =
+        rawModel && rawModel.toLowerCase().startsWith('deepseek-')
+          ? rawModel
+          : 'deepseek-chat';
       const res = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST",
         headers: {
@@ -348,7 +431,7 @@ export class AgentBrain {
           "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: config.cloudModel || config.model || "deepseek-chat",
+          model,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userInstruction },
@@ -358,34 +441,13 @@ export class AgentBrain {
         }),
       });
 
-      if (res.status === 429) {
-        throw new Error("429 Rate Limit: DeepSeek API đã chạm giới hạn tần suất.");
-      }
+      if (res.status === 429) throw new Error("429 Rate Limit: DeepSeek API đã chạm giới hạn tần suất.");
       const data = await res.json();
-      if (data.error) {
-        const fallbackRes = await fetch("https://api.deepseek.com/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: config.cloudModel || config.model || "deepseek-chat",
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userInstruction },
-            ],
-          }),
-        });
-        const fallbackData = await fallbackRes.json();
-        if (fallbackData.error) throw new Error(fallbackData.error.message || "DeepSeek API Error");
-        replyContent = fallbackData.choices?.[0]?.message?.content || "";
-      } else {
-        replyContent = data.choices?.[0]?.message?.content || "";
-      }
+      if (data.error) throw new Error(data.error.message || "DeepSeek API Error");
+      return data.choices?.[0]?.message?.content || "";
     }
 
-    return this.preprocessAndParseLLMOutput(replyContent);
+    throw new Error(`Provider không hỗ trợ: ${provider}`);
   }
 
   async executeAction(action: AgentAction): Promise<any> {
@@ -403,4 +465,3 @@ export class AgentBrain {
     }
   }
 }
-

@@ -1,3 +1,5 @@
+import { commands } from "@/ipc/commands";
+
 export async function validateApiKey(
   provider: "gemini" | "openai" | "claude" | "deepseek",
   key: string
@@ -5,6 +7,18 @@ export async function validateApiKey(
   const cleanKey = key.trim();
   if (!cleanKey) return { valid: false, error: "Vui lòng nhập key." };
 
+  // 1. Ưu tiên kiểm tra qua Rust Backend (reqwest) để tránh hoàn toàn lỗi CORS trên WebView2
+  try {
+    const backendRes = await commands.validateCloudApiKey(provider, cleanKey);
+    return {
+      valid: backendRes.valid,
+      error: backendRes.error ?? undefined,
+    };
+  } catch (ipcErr) {
+    console.warn("[apiValidator] IPC validateCloudApiKey fallback sang fetch:", ipcErr);
+  }
+
+  // 2. Fallback gọi trực tiếp từ WebView nếu chạy ngoài môi trường Tauri
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10000);
 
@@ -42,6 +56,9 @@ export async function validateApiKey(
     if (res.status === 400 || res.status === 401 || res.status === 403) {
       return { valid: false, error: "API Key không hợp lệ, sai định dạng hoặc đã hết hạn." };
     }
+    if (res.status === 402) {
+      return { valid: false, error: "Tài khoản API đã hết số dư (HTTP 402)." };
+    }
     if (res.status === 429) {
       return { valid: false, error: "Đã chạm ngưỡng giới hạn (Rate limit)." };
     }
@@ -63,4 +80,3 @@ export async function validateApiKey(
     clearTimeout(timeoutId);
   }
 }
-

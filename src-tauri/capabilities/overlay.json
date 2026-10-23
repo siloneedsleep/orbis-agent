@@ -4,6 +4,7 @@
   "description": "Overlay permissions",
   "windows": ["overlay"],
   "permissions": [
+    "core:default",
     "core:event:default"
   ]
 }

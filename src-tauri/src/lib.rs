@@ -51,6 +51,8 @@ pub fn run() {
             os::ollama::ollama_generate,
             os::ollama::ollama_status,
             os::ollama::start_ollama_server,
+            os::ollama::validate_cloud_api_key,
+            os::ollama::cloud_llm_chat,
             os::sandbox::start_sandbox_vm,
             os::sandbox::create_sandbox_checkpoint,
             os::sandbox::rollback_sandbox_checkpoint,
