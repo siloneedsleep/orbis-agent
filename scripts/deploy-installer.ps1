@@ -11,7 +11,8 @@
 [CmdletBinding()]
 param(
     [string]$CustomIconPath = "",
-    [switch]$SkipBuild = $false
+    [switch]$SkipBuild = $false,
+    [switch]$NoLaunch = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,8 +48,20 @@ Start-Sleep -Milliseconds 600
 
 # 2. Xac dinh thu muc ma nguon va dong bo commit moi nhat tu GitHub
 Write-Host "[2/6] Dong bo commit moi nhat tu GitHub..." -ForegroundColor Cyan
-$SourceDir = "C:\Users\truon\OneDrive\Desktop\orbis-agent-main"
-if (-not (Test-Path (Join-Path $SourceDir "package.json"))) {
+$possibleSourceDirs = @(
+    (Join-Path $PSScriptRoot ".."),
+    "E:\Users\truon\OneDrive\Desktop\orbis-agent-main",
+    "C:\Users\truon\OneDrive\Desktop\orbis-agent-main"
+)
+$SourceDir = $null
+foreach ($cand in $possibleSourceDirs) {
+    if ($cand -and (Test-Path (Join-Path $cand "package.json"))) {
+        $SourceDir = (Resolve-Path $cand).Path
+        break
+    }
+}
+
+if (-not $SourceDir) {
     $SourceDir = Join-Path $env:TEMP "orbis-source-latest"
     if (Test-Path $SourceDir) { Remove-Item $SourceDir -Recurse -Force -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Path $SourceDir -Force | Out-Null
@@ -86,10 +99,14 @@ if (Test-Path $BuiltReleaseExe) {
 if ($needsBuild) {
     Write-Host "   -> Dang dong goi ban standalone bang Tauri CLI (npx tauri build --no-bundle)..." -ForegroundColor Yellow
     Push-Location $SourceDir
+    if (-not (Test-Path (Join-Path $SourceDir "node_modules"))) {
+        Write-Host "   -> Cai dat dependencies (npm install)..." -ForegroundColor Gray
+        cmd.exe /c "npm install"
+    }
     cmd.exe /c "npx tauri build --no-bundle"
     Pop-Location
 } else {
-    Write-Host "   -> Su dung ban .exe standalone da nhung day du giao dien..." -ForegroundColor Green
+    Write-Host "   -> Su dung ban .exe standalone da nhung day du giao dien ($([Math]::Round((Get-Item $BuiltReleaseExe).Length / 1MB, 2)) MB)..." -ForegroundColor Green
 }
 
 $DeployDir = Join-Path $env:LOCALAPPDATA "Orbis Agent"
@@ -109,14 +126,13 @@ foreach ($dir in $targetDeployDirs) {
 }
 
 
-# 4. Xu ly Icon tu hinh anh chi dinh
-Write-Host "[4/6] Tao Icon ung dung tu hinh anh..." -ForegroundColor Cyan
-$DefaultImg = "C:\Users\truon\.gemini\antigravity\brain\50e7ccd6-f2c3-4e18-b228-368912e10c08\.user_uploaded\media_1792732621469_ebdd6db1.jpg"
-$ImgToUse = if ($CustomIconPath -and (Test-Path $CustomIconPath)) { $CustomIconPath } else { $DefaultImg }
+# 4. Xu ly Icon ung dung Orbis goc
+Write-Host "[4/6] Khoi phuc Icon ung dung Orbis goc..." -ForegroundColor Cyan
+$repoIconIco = Join-Path $SourceDir "src-tauri\icons\icon.ico"
 
-if (Test-Path $ImgToUse) {
+if ($CustomIconPath -and (Test-Path $CustomIconPath)) {
     Add-Type -AssemblyName System.Drawing
-    $src = [System.Drawing.Image]::FromFile($ImgToUse)
+    $src = [System.Drawing.Image]::FromFile($CustomIconPath)
     $minDim = [Math]::Min($src.Width, $src.Height)
     $cropX = [Math]::Max(0, [int](($src.Width - $minDim) / 2))
     $cropY = [Math]::Max(0, [int](($src.Height - $minDim) / 2))
@@ -139,24 +155,36 @@ if (Test-Path $ImgToUse) {
     $ms.Dispose()
     $squareBmp.Dispose()
 
-    $fs = New-Object System.IO.FileStream $AppIcoPath, ([System.IO.FileMode]::Create)
-    $bw = New-Object System.IO.BinaryWriter $fs
-    $bw.Write([uint16]0)
-    $bw.Write([uint16]1)
-    $bw.Write([uint16]1)
-    $bw.Write([byte]0)
-    $bw.Write([byte]0)
-    $bw.Write([byte]0)
-    $bw.Write([byte]0)
-    $bw.Write([uint16]1)
-    $bw.Write([uint16]32)
-    $bw.Write([uint32]$pngBytes.Length)
-    $bw.Write([uint32]22)
-    $bw.Write($pngBytes)
-    $bw.Flush()
-    $fs.Close()
-    Write-Host "   -> Da xuat Icon 256x256 vao: $AppIcoPath" -ForegroundColor Green
+    foreach ($dir in $targetDeployDirs) {
+        $targetIco = Join-Path $dir "app.ico"
+        $fs = New-Object System.IO.FileStream $targetIco, ([System.IO.FileMode]::Create)
+        $bw = New-Object System.IO.BinaryWriter $fs
+        $bw.Write([uint16]0)
+        $bw.Write([uint16]1)
+        $bw.Write([uint16]1)
+        $bw.Write([byte]0)
+        $bw.Write([byte]0)
+        $bw.Write([byte]0)
+        $bw.Write([byte]0)
+        $bw.Write([uint16]1)
+        $bw.Write([uint16]32)
+        $bw.Write([uint32]$pngBytes.Length)
+        $bw.Write([uint32]22)
+        $bw.Write($pngBytes)
+        $bw.Flush()
+        $fs.Close()
+        Write-Host "   -> Da tao Icon tuy chon vao: $targetIco" -ForegroundColor Green
+    }
+} else {
+    foreach ($dir in $targetDeployDirs) {
+        $targetIco = Join-Path $dir "app.ico"
+        if (Test-Path $repoIconIco) {
+            Copy-Item $repoIconIco -Destination $targetIco -Force
+            Write-Host "   -> Da khoi phuc Icon Orbis goc vao: $targetIco" -ForegroundColor Green
+        }
+    }
 }
+
 
 # 5. Tao Desktop Shortcut (Mo Orbis kem PowerShell Console)
 Write-Host "[5/6] Tao Shortcut Orbis Agent tren Desktop..." -ForegroundColor Cyan
@@ -185,9 +213,13 @@ foreach ($dt in $desktopPaths) {
 }
 
 # 6. Khoi chay ung dung ngay lap tuc
-Write-Host "[6/6] Khoi chay Orbis Agent va mo cua so PowerShell..." -ForegroundColor Cyan
-$launchArgs = "-ExecutionPolicy Bypass -NoExit -Command `"Start-Process '$AppExePath'; Write-Host '===========================================================' -ForegroundColor Cyan; Write-Host '   [ORBIS AGENT] POWERSHELL INTERACTIVE CONSOLE' -ForegroundColor Yellow; Write-Host '===========================================================' -ForegroundColor Cyan; Write-Host 'Orbis Agent da duoc khoi chay! Cua so PowerShell san sang cho cac lenh Agent.`n' -ForegroundColor Green; Set-Location '$DeployDir'`""
-Start-Process "powershell.exe" -ArgumentList $launchArgs
+if (-not $NoLaunch) {
+    Write-Host "[6/6] Khoi chay Orbis Agent va mo cua so PowerShell..." -ForegroundColor Cyan
+    $launchArgs = "-ExecutionPolicy Bypass -NoExit -Command `"Start-Process '$AppExePath'; Write-Host '===========================================================' -ForegroundColor Cyan; Write-Host '   [ORBIS AGENT] POWERSHELL INTERACTIVE CONSOLE' -ForegroundColor Yellow; Write-Host '===========================================================' -ForegroundColor Cyan; Write-Host 'Orbis Agent da duoc khoi chay! Cua so PowerShell san sang cho cac lenh Agent.`n' -ForegroundColor Green; Set-Location '$DeployDir'`""
+    Start-Process "powershell.exe" -ArgumentList $launchArgs
+} else {
+    Write-Host "[6/6] Bo qua buoc khoi chay ung dung (-NoLaunch)..." -ForegroundColor Yellow
+}
 
 Write-Host "`n============================================================" -ForegroundColor Green
 Write-Host "     CAI DAT & KHOI CHAY ORBIS AGENT HOAN TAT!            " -ForegroundColor Yellow
