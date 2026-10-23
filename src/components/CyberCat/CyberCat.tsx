@@ -466,6 +466,29 @@ export const CyberCat: React.FC<CyberCatProps> = ({
 
   const isAnyModalOpen = showMenu || showPoseBubbles || showMiniChat || showRedeemModal || showRenameModal;
 
+  // Tự động giải phóng quyền chuột khi không mở bất kỳ popup nào, chống treo click trên màn hình
+  useEffect(() => {
+    if (!isAnyModalOpen && !isDragging) {
+      commands.setOverlayInteractive(false).catch(() => {});
+    }
+  }, [isAnyModalOpen, isDragging]);
+
+  // Phím Escape đóng tất cả modal và trả quyền điều khiển về hệ điều hành
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowMenu(false);
+        setShowPoseBubbles(false);
+        setShowMiniChat(false);
+        setShowRedeemModal(false);
+        setShowRenameModal(false);
+        commands.setOverlayInteractive(false).catch(() => {});
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   return (
     <div 
       className={`pointer-events-auto absolute select-none ${

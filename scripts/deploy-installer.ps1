@@ -71,18 +71,25 @@ if (-not (Test-Path (Join-Path $SourceDir "package.json"))) {
 }
 
 # 3. Bien dich va tu dong ghi de len ban cu
-Write-Host "[3/6] Tu dong ghi de ban cu bang ban .exe moi nhat..." -ForegroundColor Cyan
+Write-Host "[3/6] Tu dong ghi de ban cu bang ban .exe standalone moi nhat..." -ForegroundColor Cyan
 $BuiltReleaseExe = Join-Path $SourceDir "src-tauri\target\release\orbis-agent.exe"
-if (-not (Test-Path $BuiltReleaseExe) -or (-not $SkipBuild)) {
-    if (Test-Path $BuiltReleaseExe) {
-        Write-Host "   -> Su dung ban .exe release da bien dich moi nhat..." -ForegroundColor Green
-    } else {
-        Write-Host "   -> Dang bien dich ma nguon thanh .exe..." -ForegroundColor Yellow
-        Push-Location $SourceDir
-        cmd.exe /c "npm run build"
-        cargo build --release --manifest-path src-tauri/Cargo.toml
-        Pop-Location
+
+# Kiem tra xem file .exe da duoc nhung day du tai nguyen frontend (khong can localhost) chua
+$needsBuild = -not (Test-Path $BuiltReleaseExe)
+if (Test-Path $BuiltReleaseExe) {
+    # File standalone embedded assets phai >= 5,000,000 bytes
+    if ((Get-Item $BuiltReleaseExe).Length -lt 5000000) {
+        $needsBuild = $true
     }
+}
+
+if ($needsBuild) {
+    Write-Host "   -> Dang dong goi ban standalone bang Tauri CLI (npx tauri build --no-bundle)..." -ForegroundColor Yellow
+    Push-Location $SourceDir
+    cmd.exe /c "npx tauri build --no-bundle"
+    Pop-Location
+} else {
+    Write-Host "   -> Su dung ban .exe standalone da nhung day du giao dien..." -ForegroundColor Green
 }
 
 $DeployDir = Join-Path $env:LOCALAPPDATA "Orbis Agent"

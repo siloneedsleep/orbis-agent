@@ -39,9 +39,7 @@ use windows_sys::Win32::{
 };
 
 /// Áp dụng cờ Win32:
-/// - WDA_EXCLUDEFROMCAPTURE: tàng hình trước DXGI / screen capture
-/// - WS_EX_TRANSPARENT + WS_EX_LAYERED: click-through ở tầng Win32
-/// - DWMWA_EXCLUDED_FROM_PEEK: ẩn khỏi Aero Peek
+/// - WS_EX_TRANSPARENT + WS_EX_LAYERED: click-through ở tầng Win32 khi không tương tác
 #[cfg(windows)]
 pub fn apply_win32_overlay_flags(hwnd: HWND, interactive: bool) {
     unsafe {
@@ -51,20 +49,12 @@ pub fn apply_win32_overlay_flags(hwnd: HWND, interactive: bool) {
         } else {
             ex_style | WS_EX_LAYERED as isize | WS_EX_TRANSPARENT as isize
         };
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
-
-        // Bắt buộc loại overlay khỏi mọi kênh screen capture
-        SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
-
-        let val: i32 = 1;
-        DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_EXCLUDED_FROM_PEEK as u32,
-            &val as *const i32 as *const _,
-            std::mem::size_of::<i32>() as u32,
-        );
+        if ex_style != new_style {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
+        }
     }
 }
+
 
 /// Overlay trong suốt, luôn nổi trên cùng, click-through, phủ toàn bộ virtual desktop.
 pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {

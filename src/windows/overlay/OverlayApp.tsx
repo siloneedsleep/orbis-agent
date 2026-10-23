@@ -38,8 +38,17 @@ export function OverlayApp() {
       })
     );
 
+    // Thoát chế độ tương tác khẩn cấp khi nhấn Escape để trả toàn quyền cho Windows
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        commands.setOverlayInteractive(false).catch(() => {});
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+
     return () => {
       disposed = true;
+      window.removeEventListener("keydown", handleGlobalKeyDown);
       unlisteners.forEach((un) => un());
     };
   }, []);
