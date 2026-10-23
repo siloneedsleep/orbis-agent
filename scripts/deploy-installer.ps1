@@ -1,7 +1,8 @@
 # ==============================================================================
-#  ORBIS AGENT - ONE-CLICK AUTO DEPLOYER & SELF-DELETING INSTALLER
-#  - Tu dong tai commit moi nhat tu GitHub
-#  - Bien dich & trien khai thanh file .exe vao LocalAppData
+#  AUTO INSTALL ORBIS - ONE-CLICK AUTO OVERWRITE & DEPLOYER
+#  - Tu dong phat hien & ghi de sach se ban cu tren may
+#  - Dong bo commit moi nhat tu GitHub
+#  - Trien khai file .exe vao LocalAppData
 #  - Trich xuat & tao icon tu hinh anh chi dinh
 #  - Tao shortcut tren Desktop tu dong mo kem PowerShell
 #  - Khoi chay app va tu dong xoa file installer roi thoat
@@ -18,25 +19,31 @@ $ErrorActionPreference = "Stop"
 
 Clear-Host
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "     ORBIS AGENT - ONE-CLICK DEPLOYER & AUTO-INSTALLER     " -ForegroundColor Yellow
+Write-Host "                    AUTO INSTALL ORBIS                      " -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "Dang chuan bi trien khai ban moi nhat tu GitHub...`n" -ForegroundColor Gray
+Write-Host "Dang tu dong kiem tra, ghi de ban cu & dong bo tu GitHub...`n" -ForegroundColor Gray
 
 $RepoUrl = "https://github.com/siloneedsleep/orbis-agent.git"
 $ZipUrl  = "https://github.com/siloneedsleep/orbis-agent/archive/refs/heads/main.zip"
-$DeployDir = Join-Path $env:LOCALAPPDATA "Orbis Agent"
-$AppExePath = Join-Path $DeployDir "orbis-agent.exe"
-$AppIcoPath = Join-Path $DeployDir "app.ico"
 
-# 1. Dong cac tien trinh Orbis cu dang chay
-Write-Host "[1/6] Kiem tra va dong tien trinh Orbis Agent cu..." -ForegroundColor Cyan
-Get-Process | Where-Object { $_.ProcessName -like "*orbis-agent*" } | ForEach-Object {
+# Xac dinh tat ca cac vi tri cai dat ban cu de ghi de
+$targetDeployDirs = @(
+    (Join-Path $env:LOCALAPPDATA "Orbis Agent"),
+    "E:\Users\truon\AppData\Local\Orbis Agent"
+) | Where-Object { $_ -ne $null } | Select-Object -Unique
+
+# 1. Dong tat ca tien trinh Orbis Agent cu dang chay
+Write-Host "[1/6] Phat hien va dong tat ca tien trinh Orbis cu..." -ForegroundColor Cyan
+$runningProcs = Get-Process | Where-Object { 
+    $_.ProcessName -like "*orbis*" -or $_.ProcessName -like "*tauri*" 
+}
+foreach ($proc in $runningProcs) {
     try {
-        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-        Write-Host "   -> Da dong tien trinh: $($_.ProcessName)" -ForegroundColor DarkGray
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        Write-Host "   -> Da tat tien trinh cu: $($proc.ProcessName) (PID: $($proc.Id))" -ForegroundColor DarkGray
     } catch {}
 }
-Start-Sleep -Milliseconds 400
+Start-Sleep -Milliseconds 600
 
 # 2. Xac dinh thu muc ma nguon va dong bo commit moi nhat tu GitHub
 Write-Host "[2/6] Dong bo commit moi nhat tu GitHub..." -ForegroundColor Cyan
@@ -56,25 +63,21 @@ if (-not (Test-Path (Join-Path $SourceDir "package.json"))) {
     if ($innerDir) { $SourceDir = $innerDir.FullName }
 } else {
     try {
-        Write-Host "   -> Cap nhat qua git pull tren $SourceDir..." -ForegroundColor Gray
+        Write-Host "   -> Cap nhat ma nguon qua git pull origin main..." -ForegroundColor Gray
         git -C $SourceDir pull origin main 2>&1 | Out-Null
     } catch {
         Write-Host "   -> Su dung ma nguon san co tai thu muc lam viec." -ForegroundColor DarkGray
     }
 }
 
-# 3. Bien dich ra file .exe (Release binary)
-Write-Host "[3/6] Trien khai va dong goi file executable (.exe)..." -ForegroundColor Cyan
-if (-not (Test-Path $DeployDir)) {
-    New-Item -ItemType Directory -Path $DeployDir -Force | Out-Null
-}
-
+# 3. Bien dich va tu dong ghi de len ban cu
+Write-Host "[3/6] Tu dong ghi de ban cu bang ban .exe moi nhat..." -ForegroundColor Cyan
 $BuiltReleaseExe = Join-Path $SourceDir "src-tauri\target\release\orbis-agent.exe"
 if (-not (Test-Path $BuiltReleaseExe) -or (-not $SkipBuild)) {
     if (Test-Path $BuiltReleaseExe) {
-        Write-Host "   -> Da co file .exe duoc bien dich gan nhat, su dung truc tiep..." -ForegroundColor Green
+        Write-Host "   -> Su dung ban .exe release da bien dich moi nhat..." -ForegroundColor Green
     } else {
-        Write-Host "   -> Dang bien dich ma nguon thanh .exe (vui long doi giay lat)..." -ForegroundColor Yellow
+        Write-Host "   -> Dang bien dich ma nguon thanh .exe..." -ForegroundColor Yellow
         Push-Location $SourceDir
         cmd.exe /c "npm run build"
         cargo build --release --manifest-path src-tauri/Cargo.toml
@@ -82,8 +85,22 @@ if (-not (Test-Path $BuiltReleaseExe) -or (-not $SkipBuild)) {
     }
 }
 
-Copy-Item $BuiltReleaseExe -Destination $AppExePath -Force
-Write-Host "   -> File .exe da duoc sao chep vao: $AppExePath" -ForegroundColor Green
+$DeployDir = Join-Path $env:LOCALAPPDATA "Orbis Agent"
+$AppExePath = Join-Path $DeployDir "orbis-agent.exe"
+$AppIcoPath = Join-Path $DeployDir "app.ico"
+
+foreach ($dir in $targetDeployDirs) {
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $destExe = Join-Path $dir "orbis-agent.exe"
+    if (Test-Path $destExe) {
+        Write-Host "   -> Phat hien ban cu tai: $dir - Dang ghi de..." -ForegroundColor Yellow
+    }
+    Copy-Item $BuiltReleaseExe -Destination $destExe -Force
+    Write-Host "   -> Ghi de thanh cong file .exe vao: $destExe" -ForegroundColor Green
+}
+
 
 # 4. Xu ly Icon tu hinh anh chi dinh
 Write-Host "[4/6] Tao Icon ung dung tu hinh anh..." -ForegroundColor Cyan
