@@ -7,6 +7,9 @@ set "SCRIPT_DIR=%~dp0"
 set "PS1_FILE=%SCRIPT_DIR%scripts\deploy-installer.ps1"
 
 if not exist "%PS1_FILE%" (
+    set "PS1_FILE=E:\Users\truon\OneDrive\Desktop\orbis-agent-main\scripts\deploy-installer.ps1"
+)
+if not exist "%PS1_FILE%" (
     set "PS1_FILE=%USERPROFILE%\OneDrive\Desktop\orbis-agent-main\scripts\deploy-installer.ps1"
 )
 
