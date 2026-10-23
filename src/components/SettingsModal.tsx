@@ -58,11 +58,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       gender,
       pronoun: getPronoun(gender),
     };
+    const isLocal = llmType === 'local';
     const newConfig: LLMConfig = {
       type: llmType,
-      provider: llmType === 'local' ? 'ollama' : (provider as any),
-      model: model.trim() || (llmType === 'local' ? 'auto' : 'deepseek-chat'),
-      apiKey: llmType === 'api' ? apiKey.trim() : undefined,
+      mode: isLocal ? 'local' : 'cloud',
+      provider: isLocal ? 'ollama' : (provider as any),
+      model: model.trim() || (isLocal ? 'auto' : 'deepseek-chat'),
+      localModel: isLocal ? (model.trim() || 'auto') : config.localModel,
+      cloudModel: !isLocal ? (model.trim() || 'deepseek-chat') : config.cloudModel,
+      cloudProvider: !isLocal ? (provider as any) : config.cloudProvider,
+      apiKey: !isLocal ? apiKey.trim() : config.apiKey,
       maxPower: config.maxPower ?? true,
     };
 

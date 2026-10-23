@@ -32,13 +32,15 @@ import {
   CatSettings,
   getStoredCatSettings,
   saveStoredCatSettings,
-  addCatExp
+  addCatExp,
+  subscribeAgentStore
 } from "@/state/agentStore";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { SettingsModal } from "@/components/SettingsModal";
 import { WorkstreamCard } from "@/components/WorkstreamCard";
 import { TeachCatView } from "@/components/TeachCat/TeachCatView";
 import { AgentBrain, AgentAction } from "@/services/agentLoop";
+import { planStepWithHybridFallback } from "@/services/orchestrator";
 
 export function DashboardApp() {
   // Profiles & Settings
@@ -70,6 +72,16 @@ export function DashboardApp() {
   const workstreamEndRef = useRef<HTMLDivElement>(null);
   const isRunningRef = useRef(isRunning);
   isRunningRef.current = isRunning;
+
+  // Đồng bộ cấu hình đa cửa sổ theo thời gian thực
+  useEffect(() => {
+    const unsubscribe = subscribeAgentStore(() => {
+      setProfile(getStoredProfile());
+      setConfig(getStoredLLMConfig());
+      setCatSettings(getStoredCatSettings());
+    });
+    return unsubscribe;
+  }, []);
 
   // Poll system status & layout
   useEffect(() => {
@@ -151,7 +163,7 @@ export function DashboardApp() {
 
     const brain = new AgentBrain();
     let loopCount = 0;
-    const maxLoops = 5;
+    const maxLoops = 15;
 
     try {
       while (isRunningRef.current && loopCount < maxLoops) {
@@ -160,7 +172,7 @@ export function DashboardApp() {
         // Phase 1: Analyzing Screen
         setCurrentStage('analyzing');
         events.emitPetState({ state: 'thinking', message: 'Em đang quan sát màn hình...' }).catch(() => {});
-        addLog(`[Vòng ${loopCount}] Giai đoạn 1: Phân tích màn hình...`);
+        addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 1: Phân tích màn hình...`);
         
         let screenData: string | undefined = undefined;
         try {
@@ -173,11 +185,14 @@ export function DashboardApp() {
           addLog(`Không chụp được màn hình: ${captureErr}`);
         }
 
-        // Phase 2: Planning Move (Reasoning)
+        // Phase 2: Planning Move (Reasoning with Hybrid Fallback)
         setCurrentStage('planning');
-        addLog(`[Vòng ${loopCount}] Giai đoạn 2: Lập kế hoạch suy luận (LLM)...`);
+        addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 2: Lập kế hoạch suy luận (LLM)...`);
         
-        const plan = await brain.planNextMove(text, screenData);
+        const plan = await planStepWithHybridFallback(brain, text, screenData);
+        if (plan.usedFallback) {
+          addLog(`[HybridFallback] Đã tự động chuyển sang phương án LLM dự phòng thành công.`);
+        }
 
         // Hiển thị Chain of Thought
         if (plan.thought) {

@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const DEFAULT_HOST: &str = "http://127.0.0.1:11434";
-const MAX_CTX_CAP: u64 = 8_192; // Giới hạn an toàn trên RAM/VRAM để không làm sập tiến trình
+const MAX_CTX_CAP: u64 = 32_768;
 
 fn get_base_url() -> String {
     std::env::var("OLLAMA_HOST")
@@ -45,56 +45,56 @@ pub fn spawn_ollama_process() -> Result<(), String> {
     candidates.push("ollama".to_string());
 
     for bin in candidates {
-        let spawned = Command::new(&bin)
-            .arg("serve")
+        let mut cmd = Command::new(&bin);
+        cmd.arg("serve")
             .env("OLLAMA_ORIGINS", "*")
-            .env("OLLAMA_HOST", "127.0.0.1:11434")
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
-        if spawned.is_ok() {
+            .env("OLLAMA_HOST", "127.0.0.1:11434");
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        if cmd.spawn().is_ok() {
             return Ok(());
         }
     }
     Err("Không tìm thấy tệp ollama.exe để tự động khởi động. Vui lòng mở thủ công hoặc cài đặt Ollama.".to_string())
 }
 
+/// Kiểm tra kết nối tới daemon Ollama (GET http://127.0.0.1:11434 với timeout 3 giây).
+/// Nếu kết nối thất bại, tự động kích hoạt `ollama serve`, chờ 2 giây rồi thử lại.
+pub async fn ensure_ollama_daemon() -> Result<(), String> {
+    let base = get_base_url();
+    let check_client = client(3);
+
+    if check_client.get(&base).send().await.is_ok() {
+        return Ok(());
+    }
+
+    // Tự động kích hoạt tiến trình nền ollama serve
+    let _ = spawn_ollama_process();
+    std::thread::sleep(Duration::from_secs(2));
+
+    check_client
+        .get(&base)
+        .send()
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("Không thể kết nối tới tiến trình Ollama tại {base} sau khi thử tự khởi động: {e}"))
+}
+
 #[tauri::command(async)]
 pub async fn start_ollama_server() -> Result<String, String> {
-    let base = get_base_url();
-    let c = client(2);
-
-    // Nếu đã chạy rồi thì báo thành công luôn
-    if c.get(format!("{base}/api/tags")).send().await.is_ok() {
-        return Ok("Ollama đã sẵn sàng".to_string());
-    }
-
-    // Chưa chạy thì spawn tiến trình
-    spawn_ollama_process()?;
-
-    // Đợi tối đa 6 giây để server lên
-    for _ in 0..12 {
-        std::thread::sleep(Duration::from_millis(500));
-        if c.get(format!("{base}/api/tags")).send().await.is_ok() {
-            return Ok("Đã khởi động Ollama thành công".to_string());
-        }
-    }
-
-    Ok("Đã gửi tín hiệu khởi động Ollama, vui lòng đợi vài giây để server nạp xong.".to_string())
+    ensure_ollama_daemon().await?;
+    Ok("Ollama đã sẵn sàng hoạt động".to_string())
 }
 
 async fn installed(c: &reqwest::Client) -> Result<Vec<ModelInfo>, String> {
+    ensure_ollama_daemon().await?;
     let base = get_base_url();
-    let resp = match c.get(format!("{base}/api/tags")).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = spawn_ollama_process();
-            std::thread::sleep(Duration::from_millis(1200));
-            c.get(format!("{base}/api/tags"))
-                .send()
-                .await
-                .map_err(|e2| format!("Không kết nối được Ollama ({base}): {e} -> {e2}"))?
-        }
-    };
+    let resp = c
+        .get(format!("{base}/api/tags"))
+        .send()
+        .await
+        .map_err(|e| format!("Không kết nối được Ollama ({base}): {e}"))?;
     let v: Value = resp.json().await.map_err(|e| e.to_string())?;
 
     Ok(v["models"]
@@ -139,11 +139,11 @@ async fn context_length(c: &reqwest::Client, model: &str) -> Option<u64> {
 }
 
 fn make_options(model_ctx: Option<u64>) -> Value {
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-    let ctx = model_ctx.map_or(4096, |c| c.min(MAX_CTX_CAP));
+    let ctx = model_ctx.map_or(MAX_CTX_CAP, |c| c.min(MAX_CTX_CAP));
     json!({
-        "num_thread": threads,
+        "num_gpu": 999,
         "num_ctx": ctx,
+        "temperature": 0.2
     })
 }
 
@@ -153,7 +153,7 @@ async fn send_chat(c: &reqwest::Client, body: &Value) -> Result<Value, String> {
         Ok(r) => r,
         Err(e) => {
             let _ = spawn_ollama_process();
-            std::thread::sleep(Duration::from_millis(1500));
+            std::thread::sleep(Duration::from_secs(2));
             c.post(format!("{base}/api/chat"))
                 .json(body)
                 .send()
@@ -192,6 +192,7 @@ pub async fn ollama_chat(
     model: Option<String>,
     max_power: Option<bool>,
 ) -> Result<ChatReply, String> {
+    ensure_ollama_daemon().await?;
     let c = client(300);
 
     let requested = model.filter(|m| {
@@ -220,20 +221,33 @@ pub async fn ollama_chat(
         })
         .collect();
 
-    let mut body = json!({ "model": model, "messages": msgs, "stream": false, "keep_alive": -1 });
-    let mut used_options = max_power.unwrap_or(false);
-    if used_options {
-        body["options"] = make_options(context_length(&c, &model).await);
-    }
+    let mut used_options = max_power.unwrap_or(true);
+    let opts = if used_options {
+        make_options(context_length(&c, &model).await)
+    } else {
+        json!({
+            "num_gpu": 999,
+            "num_ctx": 32768,
+            "temperature": 0.2
+        })
+    };
 
-    // Lượt 1: Thử gửi bình thường
+    let mut body = json!({
+        "model": model,
+        "messages": msgs,
+        "stream": false,
+        "format": "json",
+        "keep_alive": -1,
+        "options": opts
+    });
+
+    // Lượt 1: Thử gửi chuẩn với stream: false, format: "json" và options
     let reply = match send_chat(&c, &body).await {
         Ok(v) => v,
         Err(err) => {
             eprintln!("[orbis] Lượt 1 thất bại ({err}), kiểm tra fallback...");
-            
-            // Nếu có ảnh mà model không hỗ trợ vision (ví dụ qwen2.5-coder, deepseek-r1):
-            // Thử strip ảnh ra và chỉ gửi text
+
+            // Nếu có ảnh mà model không hỗ trợ vision: thử gỡ ảnh ra và chỉ gửi text
             let mut stripped_body = body.clone();
             let mut had_images = false;
             if let Some(arr) = stripped_body["messages"].as_array_mut() {
@@ -251,23 +265,16 @@ pub async fn ollama_chat(
                 match send_chat(&c, &stripped_body).await {
                     Ok(v) => v,
                     Err(err2) => {
-                        // Thử gỡ tiếp options nếu lỗi VRAM
-                        if let Some(obj) = stripped_body.as_object_mut() {
-                            obj.remove("options");
-                        }
+                        stripped_body["options"] = json!({ "num_gpu": 999, "num_ctx": 4096, "temperature": 0.2 });
                         used_options = false;
                         send_chat(&c, &stripped_body).await.map_err(|e| format!("{err2} -> {e}"))?
                     }
                 }
-            } else if used_options {
-                // Gỡ options nếu lỗi VRAM
-                if let Some(obj) = body.as_object_mut() {
-                    obj.remove("options");
-                }
+            } else {
+                // Hạ num_ctx xuống mức an toàn nếu thiếu VRAM cho 32768
+                body["options"] = json!({ "num_gpu": 999, "num_ctx": 4096, "temperature": 0.2 });
                 used_options = false;
                 send_chat(&c, &body).await?
-            } else {
-                return Err(err);
             }
         }
     };
@@ -281,6 +288,78 @@ pub async fn ollama_chat(
         model,
         content,
         max_power: used_options,
+    })
+}
+
+#[tauri::command]
+pub async fn ollama_generate(
+    prompt: String,
+    system: Option<String>,
+    model: Option<String>,
+    images: Option<Vec<String>>,
+) -> Result<ChatReply, String> {
+    ensure_ollama_daemon().await?;
+    let c = client(300);
+
+    let requested = model.filter(|m| {
+        let m = m.trim();
+        !m.is_empty() && m != "auto"
+    });
+
+    let model = match requested {
+        Some(m) => m,
+        None => {
+            let all = installed(&c).await?;
+            largest(&all)
+                .map(|m| m.name.clone())
+                .ok_or("Ollama chưa có model nào. Chạy lệnh: ollama pull <model>")?
+        }
+    };
+
+    let mut body = json!({
+        "model": model,
+        "prompt": prompt,
+        "stream": false,
+        "format": "json",
+        "options": {
+            "num_gpu": 999,
+            "num_ctx": 32768,
+            "temperature": 0.2
+        }
+    });
+
+    if let Some(sys_prompt) = system {
+        body["system"] = json!(sys_prompt);
+    }
+    if let Some(imgs) = images {
+        if !imgs.is_empty() {
+            body["images"] = json!(imgs);
+        }
+    }
+
+    let base = get_base_url();
+    let resp = c
+        .post(format!("{base}/api/generate"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Lỗi gọi /api/generate trên Ollama: {e}"))?;
+
+    let status = resp.status();
+    let v: Value = resp.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(v["error"].as_str().unwrap_or("Lỗi máy chủ Ollama").to_string());
+    }
+
+    let content = v["response"]
+        .as_str()
+        .ok_or("Ollama /api/generate không trả về trường response")?
+        .to_string();
+
+    Ok(ChatReply {
+        model,
+        content,
+        max_power: true,
     })
 }
 

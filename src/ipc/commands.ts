@@ -68,11 +68,25 @@ export const commands = {
     invoke<string>("capture_screen_region", { x, y, width, height }),
   ollamaStatus: () => invoke<OllamaStatus>("ollama_status"),
   startOllamaServer: () => invoke<string>("start_ollama_server"),
+  checkOllamaDaemon: () => invoke<string>("check_ollama_daemon"),
   ollamaChat: (messages: OllamaMessage[], opts: OllamaOptions = {}) =>
     invoke<OllamaReply>("ollama_chat", {
       messages,
       model: opts.model ?? null,
       maxPower: opts.maxPower ?? true,
+    }),
+  callLocalLlm: (messages: OllamaMessage[], opts: OllamaOptions = {}) =>
+    invoke<OllamaReply>("call_local_llm", {
+      messages,
+      model: opts.model ?? null,
+      maxPower: opts.maxPower ?? true,
+    }),
+  ollamaGenerate: (prompt: string, opts: { system?: string; model?: string; images?: string[] } = {}) =>
+    invoke<OllamaReply>("ollama_generate", {
+      prompt,
+      system: opts.system ?? null,
+      model: opts.model ?? null,
+      images: opts.images ?? null,
     }),
   startSandboxVm: () => invoke<string>("start_sandbox_vm"),
   createSandboxCheckpoint: (snapshotName: string) => invoke<string>("create_sandbox_checkpoint", { snapshotName }),

@@ -11,6 +11,7 @@ import {
   getStoredProfile 
 } from '@/state/agentStore';
 import { AgentBrain } from '@/services/agentLoop';
+import { planStepWithHybridFallback } from '@/services/orchestrator';
 import { redeemCode, RedeemResult } from '@/services/redeemService';
 import { 
   Heart, 
@@ -298,9 +299,9 @@ export const CyberCat: React.FC<CyberCatProps> = ({
         console.warn("MiniChat screen capture error:", capErr);
       }
 
-      // 2. Gọi AgentBrain lập kế hoạch
+      // 2. Gọi AgentBrain lập kế hoạch (kèm Hybrid Fallback và đọc config mới nhất từ agentStore)
       const brain = new AgentBrain();
-      const plan = await brain.planNextMove(text, screenData);
+      const plan = await planStepWithHybridFallback(brain, text, screenData);
 
       // 3. Thực thi hành động nếu cần thao tác máy tính
       if (plan.action && plan.action.type !== 'done') {

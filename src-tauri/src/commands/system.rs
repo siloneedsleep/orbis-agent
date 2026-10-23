@@ -23,3 +23,19 @@ pub async fn get_system_info() -> SystemInfo {
 pub async fn open_dashboard(app: AppHandle) -> Result<(), String> {
     shell::dashboard::show(&app).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn check_ollama_daemon() -> Result<String, String> {
+    os::ollama::ensure_ollama_daemon().await?;
+    Ok("Ollama daemon online".to_string())
+}
+
+#[tauri::command]
+pub async fn call_local_llm(
+    messages: Vec<os::ollama::ChatMsg>,
+    model: Option<String>,
+    max_power: Option<bool>,
+) -> Result<os::ollama::ChatReply, String> {
+    os::ollama::ollama_chat(messages, model, max_power).await
+}
+

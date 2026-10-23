@@ -6,8 +6,12 @@ export interface UserProfile {
 
 export interface LLMConfig {
   type: 'local' | 'api';
+  mode?: 'local' | 'cloud';
   provider: 'ollama' | 'deepseek' | 'gemini' | 'openai' | 'claude';
   model: string;
+  localModel?: string;
+  cloudModel?: string;
+  cloudProvider?: 'deepseek' | 'gemini' | 'openai' | 'claude';
   apiKey?: string;
   maxPower?: boolean;
 }
@@ -230,30 +234,135 @@ export function renameCat(newName: string): { success: boolean; settings: CatSet
 const PROFILE_KEY = 'orbis_user_profile';
 const LLM_KEY = 'orbis_llm_config';
 
+type StoreChangeListener = () => void;
+const storeListeners = new Set<StoreChangeListener>();
+
+let cachedProfile: UserProfile | null = null;
+let cachedLLMConfig: LLMConfig | null = null;
+
+function normalizeLLMConfig(rawConfig: Partial<LLMConfig> | null): LLMConfig | null {
+  if (!rawConfig) return null;
+  const isLocal = rawConfig.mode === 'local' || rawConfig.type === 'local' || rawConfig.provider === 'ollama';
+  const mode: 'local' | 'cloud' = isLocal ? 'local' : 'cloud';
+  const type: 'local' | 'api' = isLocal ? 'local' : 'api';
+  const cloudProvider = (
+    rawConfig.cloudProvider ||
+    (rawConfig.provider && rawConfig.provider !== 'ollama' ? rawConfig.provider : undefined) ||
+    'deepseek'
+  ) as 'deepseek' | 'gemini' | 'openai' | 'claude';
+  const provider = isLocal ? 'ollama' : cloudProvider;
+
+  const localModel = rawConfig.localModel || (isLocal ? rawConfig.model : undefined) || 'auto';
+  const cloudModel = rawConfig.cloudModel || (!isLocal ? rawConfig.model : undefined) || 'deepseek-chat';
+  const model = isLocal ? localModel : cloudModel;
+
+  let apiKey = rawConfig.apiKey;
+  if (!apiKey && typeof window !== 'undefined' && window.localStorage) {
+    apiKey =
+      localStorage.getItem(`orbis_${cloudProvider}_key`) ||
+      localStorage.getItem('orbis_gemini_key') ||
+      localStorage.getItem('orbis_openai_key') ||
+      localStorage.getItem('orbis_claude_key') ||
+      localStorage.getItem('orbis_deepseek_key') ||
+      undefined;
+  }
+
+  return {
+    type,
+    mode,
+    provider,
+    model,
+    localModel,
+    cloudModel,
+    cloudProvider,
+    apiKey,
+    maxPower: rawConfig.maxPower ?? true,
+  };
+}
+
 export function getStoredProfile(): UserProfile | null {
   try {
     const raw = localStorage.getItem(PROFILE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    cachedProfile = raw ? JSON.parse(raw) : null;
+    return cachedProfile;
   } catch {
-    return null;
+    return cachedProfile;
   }
 }
 
 export function saveStoredProfile(profile: UserProfile): void {
+  cachedProfile = profile;
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  storeListeners.forEach((listener) => listener());
 }
 
 export function getStoredLLMConfig(): LLMConfig | null {
   try {
     const raw = localStorage.getItem(LLM_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return cachedLLMConfig;
+    const parsed = JSON.parse(raw);
+    cachedLLMConfig = normalizeLLMConfig(parsed);
+    return cachedLLMConfig;
   } catch {
-    return null;
+    return cachedLLMConfig;
   }
 }
 
 export function saveStoredLLMConfig(config: LLMConfig): void {
-  localStorage.setItem(LLM_KEY, JSON.stringify(config));
+  const prev = getStoredLLMConfig();
+  const isLocal = config.mode === 'local' || config.type === 'local' || config.provider === 'ollama';
+  const cloudProvider = (
+    !isLocal && config.provider !== 'ollama'
+      ? config.provider
+      : config.cloudProvider || prev?.cloudProvider || (prev?.provider !== 'ollama' ? prev?.provider : 'deepseek') || 'deepseek'
+  ) as 'deepseek' | 'gemini' | 'openai' | 'claude';
+
+  const merged: LLMConfig = {
+    type: isLocal ? 'local' : 'api',
+    mode: isLocal ? 'local' : 'cloud',
+    provider: isLocal ? 'ollama' : cloudProvider,
+    model: config.model || (isLocal ? prev?.localModel || 'auto' : prev?.cloudModel || 'deepseek-chat'),
+    localModel: isLocal ? (config.localModel || config.model || 'auto') : (config.localModel || prev?.localModel || 'auto'),
+    cloudModel: !isLocal ? (config.cloudModel || config.model || 'deepseek-chat') : (config.cloudModel || prev?.cloudModel || 'deepseek-chat'),
+    cloudProvider,
+    apiKey: config.apiKey?.trim() || prev?.apiKey,
+    maxPower: config.maxPower ?? prev?.maxPower ?? true,
+  };
+
+  if (merged.apiKey && typeof window !== 'undefined' && window.localStorage) {
+    localStorage.setItem(`orbis_${cloudProvider}_key`, merged.apiKey);
+  }
+
+  cachedLLMConfig = merged;
+  localStorage.setItem(LLM_KEY, JSON.stringify(merged));
+  storeListeners.forEach((listener) => listener());
+}
+
+export function subscribeAgentStore(listener: StoreChangeListener): () => void {
+  storeListeners.add(listener);
+  return () => {
+    storeListeners.delete(listener);
+  };
+}
+
+// Đồng bộ tự động cấu hình LLM & Profile giữa 2 cửa sổ WebView (dashboard.html <-> overlay.html)
+if (typeof window !== 'undefined') {
+  cachedProfile = getStoredProfile();
+  cachedLLMConfig = getStoredLLMConfig();
+
+  window.addEventListener('storage', (event: StorageEvent) => {
+    if (
+      !event.key ||
+      event.key === LLM_KEY ||
+      event.key === PROFILE_KEY ||
+      event.key === CAT_KEY ||
+      event.key.startsWith('orbis_')
+    ) {
+      cachedProfile = getStoredProfile();
+      cachedLLMConfig = getStoredLLMConfig();
+      storeListeners.forEach((listener) => listener());
+    }
+  });
 }
 
 export function buildSystemPrompt(profile?: UserProfile | null, catSettings?: CatSettings | null): string {
@@ -278,16 +387,21 @@ ${skillsPrompt}
 Nhiệm vụ của bạn:
 1. Tiếp nhận yêu cầu của ${pronoun} ${userName}.
 2. Suy luận (Chain of Thought): Phân tích ngữ cảnh màn hình và các cửa sổ đang mở.
-3. Ra lệnh tự động hóa: Trả về kế hoạch JSON theo định dạng nghiêm ngặt:
-{
-  "thought": "Suy nghĩ phân tích của bạn tại đây...",
-  "action": "mouse_move" | "mouse_click" | "keyboard_type" | "sandbox_exec" | "done",
-  "params": { ... },
-  "message": "Thông báo ngắn gọn cho ${pronoun} ${userName}"
-}
+3. Ra lệnh tự động hóa: Trả về DUY NHẤT 1 JSON object hợp lệ sử dụng khóa "type" khớp hoàn toàn với định nghĩa AgentAction (không bọc văn bản giải thích bên ngoài JSON):
+- Di chuyển chuột:
+  { "type": "mouse_move", "x": 500, "y": 300, "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
+- Click chuột:
+  { "type": "mouse_click", "button": "left", "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
+- Gõ phím:
+  { "type": "keyboard_type", "text": "Nội dung cần gõ", "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
+- Chạy lệnh trong Sandbox an toàn:
+  { "type": "sandbox_exec", "command": "Lệnh thực thi", "requireCheckpoint": true, "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
+- Hoàn tất tác vụ / Trả lời người dùng:
+  { "type": "done", "message": "Câu trả lời hoặc báo cáo hoàn tất cho ${pronoun} ${userName}", "thought": "Suy nghĩ phân tích..." }
 
 Quy tắc bảo mật & an toàn:
-- Nếu thao tác liên quan đến lệnh hệ thống nguy hiểm (xóa tệp, can thiệp registry, cài đặt phần mềm không rõ nguồn gốc), BẮT BUỘC thực thi trong Detonation Sandbox (sandbox_exec).
+- Nếu thao tác liên quan đến lệnh hệ thống nguy hiểm (xóa tệp, can thiệp registry, cài đặt phần mềm không rõ nguồn gốc), BẮT BUỘC thực thi trong Detonation Sandbox (type: "sandbox_exec").
 - Luôn giữ thái độ phục vụ tận tâm, ngắn gọn và chính xác.`;
 }
+
 

@@ -98,11 +98,16 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ onComplete }) 
       pronoun: getPronoun(gender),
     };
 
+    const isLocal = llmType === 'local';
     const config: LLMConfig = {
       type: llmType,
-      provider: llmType === 'local' ? 'ollama' : provider,
-      model: llmType === 'local' ? selectedOllamaModel : apiModel,
-      apiKey: llmType === 'api' ? apiKey.trim() : undefined,
+      mode: isLocal ? 'local' : 'cloud',
+      provider: isLocal ? 'ollama' : provider,
+      model: isLocal ? selectedOllamaModel : apiModel,
+      localModel: selectedOllamaModel,
+      cloudModel: apiModel,
+      cloudProvider: provider,
+      apiKey: apiKey.trim() || undefined,
       maxPower,
     };
 
