@@ -11,15 +11,14 @@ import {
   AlertOctagon, 
   PanelRightClose, 
   PanelRightOpen, 
-  Cpu, 
-  Key, 
-  Layers, 
-  Monitor, 
   Check, 
-  HelpCircle,
   Plus,
   GraduationCap,
-  Sparkles
+  ChevronDown,
+  RotateCcw,
+  BookmarkPlus,
+  ExternalLink,
+  Shield
 } from "lucide-react";
 import { commands, OverlayLayout, SystemInfo } from "@/ipc/commands";
 import { events } from "@/ipc/events";
@@ -33,7 +32,10 @@ import {
   getStoredCatSettings,
   saveStoredCatSettings,
   addCatExp,
-  subscribeAgentStore
+  subscribeAgentStore,
+  SandboxExecutionPolicy,
+  getStoredSandboxPolicy,
+  saveStoredSandboxPolicy
 } from "@/state/agentStore";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { SettingsModal } from "@/components/SettingsModal";
@@ -41,6 +43,73 @@ import { WorkstreamCard } from "@/components/WorkstreamCard";
 import { TeachCatView } from "@/components/TeachCat/TeachCatView";
 import { AgentBrain, AgentAction } from "@/services/agentLoop";
 import { planStepWithHybridFallback } from "@/services/orchestrator";
+
+interface PolicyOption {
+  id: SandboxExecutionPolicy;
+  label: string;
+  desc: string;
+  requiresAdmin?: boolean;
+}
+
+const SANDBOX_POLICY_OPTIONS: PolicyOption[] = [
+  {
+    id: 'request_review',
+    label: 'Request Review',
+    desc: 'Every command requires approval.',
+  },
+  {
+    id: 'default',
+    label: 'Default',
+    desc: 'Ask before sensitive operations.',
+  },
+  {
+    id: 'auto',
+    label: 'Auto (Preview)',
+    desc: 'Automatically decide if commands run.',
+  },
+  {
+    id: 'turbo',
+    label: 'Turbo',
+    desc: 'Run all commands without restrictions.',
+    requiresAdmin: true,
+  },
+];
+
+function PolicyShieldIcon({ policy, className = "h-5 w-5" }: { policy: SandboxExecutionPolicy; className?: string }) {
+  switch (policy) {
+    case 'request_review':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <path d="M8.5 12s1.5-2.5 3.5-2.5 3.5 2.5 3.5 2.5-1.5 2.5-3.5 2.5-3.5-2.5-3.5-2.5z" />
+          <circle cx="12" cy="12" r="1" fill="currentColor" />
+        </svg>
+      );
+    case 'default':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <rect x="9.5" y="11" width="5" height="4" rx="0.8" />
+          <path d="M10.5 11V9.8a1.5 1.5 0 0 1 3 0V11" />
+        </svg>
+      );
+    case 'auto':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <path d="M12 8.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1 1.1-2.4z" />
+        </svg>
+      );
+    case 'turbo':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <line x1="12" y1="8.5" x2="12" y2="12.5" />
+          <circle cx="12" cy="15.5" r="0.6" fill="currentColor" />
+        </svg>
+      );
+  }
+}
 
 export function DashboardApp() {
   // Profiles & Settings
@@ -54,8 +123,14 @@ export function DashboardApp() {
   const [showInspector, setShowInspector] = useState<boolean>(true);
   const [inspectorTab, setInspectorTab] = useState<'screen' | 'logs' | 'system'>('screen');
 
-  // Execution Mode: 'computer_use' (OS control) | 'sandbox' (VM detonation) | 'chat' | 'teach_cat'
+  // Execution Mode: 'computer_use' (OS control) | 'sandbox' (Isolated Sandbox) | 'chat' | 'teach_cat'
   const [mode, setMode] = useState<'computer_use' | 'sandbox' | 'chat' | 'teach_cat'>('computer_use');
+
+  // Sandbox Execution Policy ('request_review' | 'default' | 'auto' | 'turbo')
+  const [sandboxPolicy, setSandboxPolicy] = useState<SandboxExecutionPolicy>(getStoredSandboxPolicy());
+  const [showPolicyMenu, setShowPolicyMenu] = useState<boolean>(false);
+  const [showAdminRequiredModal, setShowAdminRequiredModal] = useState<boolean>(false);
+  const [sandboxBusy, setSandboxBusy] = useState<boolean>(false);
 
   // System status
   const [sys, setSys] = useState<SystemInfo | null>(null);
@@ -71,6 +146,19 @@ export function DashboardApp() {
 
   const workstreamEndRef = useRef<HTMLDivElement>(null);
   const isRunningRef = useRef<boolean>(false);
+  const pendingApprovalResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map());
+  const policyMenuRef = useRef<HTMLDivElement>(null);
+
+  // Đóng menu policy khi click ra ngoài
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (policyMenuRef.current && !policyMenuRef.current.contains(e.target as Node)) {
+        setShowPolicyMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Đồng bộ cấu hình đa cửa sổ theo thời gian thực
   useEffect(() => {
@@ -93,7 +181,14 @@ export function DashboardApp() {
     const pollSys = async () => {
       try {
         const s = await commands.getSystemInfo();
-        if (!cancelled) setSys(s);
+        if (!cancelled) {
+          setSys(s);
+          // Nếu đang để chế độ Turbo mà Orbis không có quyền Admin -> tự động hạ về Default
+          if (!s.isAdmin && getStoredSandboxPolicy() === 'turbo') {
+            setSandboxPolicy('default');
+            saveStoredSandboxPolicy('default');
+          }
+        }
       } catch (err) {
         console.error("Error getting system info:", err);
       }
@@ -133,11 +228,110 @@ export function DashboardApp() {
     return newItem.id;
   };
 
+  // Chọn chế độ thực thi Sandbox (Request Review / Default / Auto / Turbo)
+  const handleSelectPolicy = (nextPolicy: SandboxExecutionPolicy) => {
+    if (nextPolicy === 'turbo' && !sys?.isAdmin) {
+      setShowPolicyMenu(false);
+      setShowAdminRequiredModal(true);
+      addLog("Cảnh báo: Chế độ Turbo yêu cầu Orbis Agent phải chạy với quyền Administrator.");
+      return;
+    }
+    setSandboxPolicy(nextPolicy);
+    saveStoredSandboxPolicy(nextPolicy);
+    setShowPolicyMenu(false);
+    const found = SANDBOX_POLICY_OPTIONS.find(o => o.id === nextPolicy);
+    addLog(`Đã chuyển chế độ kiểm duyệt Sandbox sang: ${found?.label || nextPolicy}`);
+  };
+
+  // Nâng quyền Admin cho chế độ Turbo
+  const handleRequestAdminElevation = async () => {
+    try {
+      saveStoredSandboxPolicy('turbo');
+      const msg = await commands.requestAdminElevation();
+      addLog(msg);
+      setShowAdminRequiredModal(false);
+    } catch (err: any) {
+      addLog(`Không thể nâng quyền Admin: ${err?.message || err}`);
+    }
+  };
+
+  // Các thao tác quản lý môi trường Sandbox
+  const handleOpenSandbox = async () => {
+    setSandboxBusy(true);
+    try {
+      const msg = await commands.startSandboxVm();
+      addLog(msg);
+      addItem({
+        type: 'assistant',
+        content: `🛡️ ${msg}`,
+      });
+    } catch (err: any) {
+      addLog(`Lỗi mở Sandbox: ${err?.message || err}`);
+    } finally {
+      setSandboxBusy(false);
+    }
+  };
+
+  const handleCreateCheckpoint = async () => {
+    setSandboxBusy(true);
+    try {
+      const msg = await commands.createSandboxCheckpoint("orbis_checkpoint");
+      addLog(msg);
+      addItem({
+        type: 'assistant',
+        content: `📌 ${msg}`,
+      });
+    } catch (err: any) {
+      addLog(`Lỗi tạo Checkpoint: ${err?.message || err}`);
+    } finally {
+      setSandboxBusy(false);
+    }
+  };
+
+  const handleRestoreCheckpoint = async () => {
+    setSandboxBusy(true);
+    try {
+      const msg = await commands.rollbackSandboxCheckpoint("orbis_checkpoint");
+      addLog(msg);
+      addItem({
+        type: 'assistant',
+        content: `⏪ ${msg}`,
+      });
+    } catch (err: any) {
+      addLog(`Lỗi khôi phục Checkpoint: ${err?.message || err}`);
+    } finally {
+      setSandboxBusy(false);
+    }
+  };
+
+  // Xử lý khi người dùng bấm Chấp thuận / Từ chối trên Action Card
+  const handleConfirmAction = (cardId: string, approved: boolean) => {
+    const resolver = pendingApprovalResolvers.current.get(cardId);
+    if (resolver) {
+      pendingApprovalResolvers.current.delete(cardId);
+      resolver(approved);
+    }
+  };
+
+  // Kiểm tra lệnh có nhạy cảm hay không (dùng cho chế độ Default)
+  const isSensitiveAction = (action: AgentAction): boolean => {
+    if (action.type === 'sandbox_exec') {
+      return /rm\b|del\b|remove-item|reg\b|stop-process|taskkill|format\b|netsh|invoke-webrequest|curl|wget|shutdown|restart|rd\b|rmdir/i.test(
+        action.command
+      );
+    }
+    return false;
+  };
+
   // Emergency Kill Switch
   const handleEmergencyStop = () => {
     isRunningRef.current = false;
     setIsRunning(false);
     setCurrentStage(null);
+    // Hủy toàn bộ các lệnh đang chờ phê duyệt
+    pendingApprovalResolvers.current.forEach((resolve) => resolve(false));
+    pendingApprovalResolvers.current.clear();
+
     events.emitPetState({ state: 'wake', message: 'Đã dừng khẩn cấp!' }).catch(() => {});
     addLog("EMERGENCY KILL SWITCH ACTIVATED: Đã dừng toàn bộ vòng lặp Agent!");
     addItem({
@@ -151,10 +345,17 @@ export function DashboardApp() {
     const text = inputPrompt.trim();
     if (!text || isRunningRef.current) return;
 
+    // Kiểm tra lại quyền Admin nếu đang chọn Turbo
+    let activePolicy = sandboxPolicy;
+    if (activePolicy === 'turbo' && !sys?.isAdmin) {
+      setShowAdminRequiredModal(true);
+      return;
+    }
+
     setInputPrompt('');
     isRunningRef.current = true;
     setIsRunning(true);
-    addLog(`Bắt đầu tác vụ: "${text}"`);
+    addLog(`Bắt đầu tác vụ: "${text}" (Policy: ${activePolicy.toUpperCase()})`);
 
     // Add user message to stream
     addItem({
@@ -223,9 +424,15 @@ export function DashboardApp() {
           break;
         }
 
-        events.emitPetState({ state: 'executing', message: `Em đang thực hiện ${plan.action.type}...` }).catch(() => {});
+        // Kiểm tra chính sách phê duyệt theo 4 chế độ Sandbox Policy:
+        // - request_review: Mọi lệnh đều cần người dùng bấm Chấp thuận
+        // - default: Chỉ hỏi trước các thao tác nhạy cảm
+        // - auto: AI tự động quyết định (tự tạo checkpoint nếu lệnh nhạy cảm)
+        // - turbo: Chạy thẳng toàn bộ không giới hạn (yêu cầu Admin)
+        const needsApproval =
+          activePolicy === 'request_review' ||
+          (activePolicy === 'default' && isSensitiveAction(plan.action));
 
-        // Tạo action card
         let toolName: any = 'ClickButton';
         if (plan.action.type === 'mouse_move') toolName = 'MoveMouse';
         if (plan.action.type === 'mouse_click') toolName = 'ClickButton';
@@ -237,14 +444,62 @@ export function DashboardApp() {
           actionData: {
             tool: toolName,
             params: plan.action,
-            status: 'running',
+            status: needsApproval ? 'pending_approval' : 'running',
+            policyMode: activePolicy,
           }
         });
+
+        if (needsApproval) {
+          addLog(`[Policy: ${activePolicy}] Đang chờ người dùng phê duyệt hành động [${plan.action.type}]...`);
+          events.emitPetState({ state: 'wake', message: 'Anh ơi, duyệt lệnh giúp em nhé!' }).catch(() => {});
+
+          const approved = await new Promise<boolean>((resolve) => {
+            pendingApprovalResolvers.current.set(actionCardId, resolve);
+          });
+
+          if (!approved) {
+            setWorkstream(prev => prev.map(it => {
+              if (it.id === actionCardId && it.actionData) {
+                return {
+                  ...it,
+                  actionData: {
+                    ...it.actionData,
+                    status: 'rejected',
+                    result: 'Người dùng đã từ chối thực thi lệnh này.',
+                  }
+                };
+              }
+              return it;
+            }));
+            addLog(`Đã từ chối thực thi hành động [${plan.action.type}].`);
+            break;
+          }
+
+          // Chuyển trạng thái sang running sau khi được duyệt
+          setWorkstream(prev => prev.map(it => {
+            if (it.id === actionCardId && it.actionData) {
+              return {
+                ...it,
+                actionData: {
+                  ...it.actionData,
+                  status: 'running',
+                }
+              };
+            }
+            return it;
+          }));
+        } else if (activePolicy === 'auto' && isSensitiveAction(plan.action)) {
+          // Chế độ Auto (Preview): Tự động tạo checkpoint trước khi thực thi thao tác nhạy cảm
+          addLog("[Auto Policy] Tự động lưu Checkpoint Sandbox trước khi chạy lệnh nhạy cảm...");
+          await commands.createSandboxCheckpoint("auto_safety_guard").catch(() => {});
+        }
+
+        events.emitPetState({ state: 'executing', message: `Em đang thực hiện ${plan.action.type}...` }).catch(() => {});
 
         const startT = Date.now();
         const execResult = await brain.executeAction(plan.action);
         const duration = Date.now() - startT;
-        actionHistory.push(`${plan.action.type}: ${JSON.stringify(plan.action)}`);
+        actionHistory.push(`${plan.action.type}: ${JSON.stringify(plan.action)} -> ${String(execResult).slice(0, 200)}`);
 
         // Cập nhật card thành công
         setWorkstream(prev => prev.map(it => {
@@ -297,6 +552,8 @@ export function DashboardApp() {
     }
   };
 
+  const currentPolicyObj = SANDBOX_POLICY_OPTIONS.find(o => o.id === sandboxPolicy) || SANDBOX_POLICY_OPTIONS[1];
+
   return (
     <div className="flex h-screen w-screen flex-col bg-zinc-950 font-sans text-zinc-100 antialiased overflow-hidden select-none">
       {/* Onboarding Modal */}
@@ -324,6 +581,44 @@ export function DashboardApp() {
             addLog(`Cập nhật cấu hình: ${c.provider} (${c.model})`);
           }}
         />
+      )}
+
+      {/* Modal Yêu cầu quyền Administrator cho chế độ Turbo */}
+      {showAdminRequiredModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-zinc-900 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-400">
+                <PolicyShieldIcon policy="turbo" className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Chế độ Turbo yêu cầu quyền Admin</h3>
+                <p className="text-xs text-zinc-400">Run all commands without restrictions</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              Để kích hoạt chế độ <strong className="text-amber-300">Turbo</strong> (thực thi toàn bộ lệnh không giới hạn trong Sandbox và hệ thống), Orbis Agent bắt buộc phải được chạy với quyền <strong className="text-white">Administrator</strong>.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowAdminRequiredModal(false)}
+                className="rounded-lg px-4 py-2 text-xs text-zinc-400 hover:text-white transition"
+              >
+                Để sau
+              </button>
+              <button
+                type="button"
+                onClick={handleRequestAdminElevation}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-bold text-zinc-950 shadow-lg transition"
+              >
+                <span>👑 Cấp quyền Admin & Bật Turbo</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 1. TOP HEADER BAR */}
@@ -431,7 +726,7 @@ export function DashboardApp() {
             <div className="space-y-1">
               {[
                 { id: 'computer_use', label: 'Computer-Use (OS)', icon: MousePointer, desc: 'Tự động chuột & bàn phím' },
-                { id: 'sandbox', label: 'Detonation Sandbox', icon: ShieldAlert, desc: 'Cách ly trong Hyper-V VM' },
+                { id: 'sandbox', label: 'Truy cập Sandbox', icon: ShieldAlert, desc: 'Môi trường thực thi cô lập' },
                 { id: 'chat', label: 'Chat Assistant', icon: Bot, desc: 'Trò chuyện không can thiệp OS' },
                 { id: 'teach_cat', label: 'Huấn luyện Mèo', icon: GraduationCap, desc: 'Dạy kỹ năng & thói quen' },
               ].map((m) => {
@@ -507,7 +802,7 @@ export function DashboardApp() {
           {/* System Telemetry Box */}
           <div className="mt-auto rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 text-[11px] space-y-2">
             <div className="font-semibold text-zinc-400 text-[10px] uppercase tracking-wider flex items-center justify-between">
-              <span>Hệ thống</span>
+              <span>Hệ thống & Sandbox</span>
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             </div>
 
@@ -525,10 +820,22 @@ export function DashboardApp() {
               </span>
             </div>
 
-            <div className="flex justify-between text-zinc-400">
-              <span>Sandbox VM:</span>
-              <span className="font-mono text-emerald-400">Sẵn sàng</span>
+            <div className="flex items-center justify-between text-zinc-400">
+              <span>Quyền thực thi:</span>
+              <span className={`font-mono font-medium ${sandboxPolicy === 'turbo' ? 'text-amber-400' : 'text-cyan-400'}`}>
+                {currentPolicyObj.label}
+              </span>
             </div>
+
+            <button
+              type="button"
+              onClick={handleOpenSandbox}
+              disabled={sandboxBusy}
+              className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 py-1.5 text-[11px] font-medium text-cyan-300 hover:bg-cyan-500/20 transition disabled:opacity-50"
+            >
+              <ExternalLink className="h-3 w-3" />
+              <span>Truy cập Sandbox</span>
+            </button>
           </div>
         </aside>
 
@@ -538,120 +845,247 @@ export function DashboardApp() {
             <TeachCatView onSettingsChange={(s) => setCatSettings(s)} />
           ) : (
             <>
-              {/* Multi-stage Progress Indicator */}
-          {isRunning && currentStage && (
-            <div className="border-b border-zinc-800 bg-zinc-900/60 px-4 py-2 flex items-center justify-center gap-6 text-xs font-mono">
-              {[
-                { id: 'analyzing', label: '1. Phân tích màn hình' },
-                { id: 'planning', label: '2. Lập kế hoạch' },
-                { id: 'executing', label: '3. Thực thi chuột/phím' },
-                { id: 'verifying', label: '4. Kiểm tra kết quả' },
-              ].map((st) => {
-                const isActive = currentStage === st.id;
-                return (
-                  <div
-                    key={st.id}
-                    className={`flex items-center gap-1.5 transition ${
-                      isActive ? 'text-cyan-400 font-bold scale-105' : 'text-zinc-600'
-                    }`}
-                  >
-                    {isActive && <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />}
-                    <span>{st.label}</span>
+              {/* Thanh điều khiển Sandbox chuyên biệt khi đang ở chế độ Truy cập Sandbox */}
+              {mode === 'sandbox' && (
+                <div className="border-b border-zinc-800 bg-zinc-900/90 px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                      <ShieldAlert className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white">Môi trường Orbis Sandbox</span>
+                        <span className="rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-mono text-emerald-400">
+                          Isolated Workspace
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-400">
+                        Chế độ hiện tại: <strong className="text-zinc-200">{currentPolicyObj.label}</strong> — {currentPolicyObj.desc}
+                      </p>
+                    </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
 
-          {/* Workstream Feed */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            {workstream.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center text-center p-8 space-y-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-900 border border-zinc-800 text-cyan-400 shadow-inner">
-                  <Bot className="h-6 w-6" />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleOpenSandbox}
+                      disabled={sandboxBusy}
+                      className="flex items-center gap-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow transition disabled:opacity-50"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      <span>Mở Sandbox</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleCreateCheckpoint}
+                      disabled={sandboxBusy}
+                      className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 transition disabled:opacity-50"
+                      title="Lưu trạng thái thư mục Sandbox hiện tại"
+                    >
+                      <BookmarkPlus className="h-3.5 w-3.5 text-cyan-400" />
+                      <span>Lưu Checkpoint</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleRestoreCheckpoint}
+                      disabled={sandboxBusy}
+                      className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 transition disabled:opacity-50"
+                      title="Khôi phục Sandbox về Checkpoint đã lưu"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 text-amber-400" />
+                      <span>Khôi phục</span>
+                    </button>
+                  </div>
                 </div>
-                <h3 className="text-base font-semibold text-white">
-                  Xin chào {profile?.pronoun} {profile?.name}!
-                </h3>
-                <p className="max-w-md text-xs text-zinc-400 leading-relaxed">
-                  Orbis Agent đã kết nối với <strong className="text-zinc-200">{config?.provider.toUpperCase()}</strong>. Hãy nhập yêu cầu để Agent tự động hóa công việc trên máy tính của {profile?.pronoun}.
-                </p>
-                <div className="flex flex-wrap justify-center gap-2 pt-2">
+              )}
+
+              {/* Multi-stage Progress Indicator */}
+              {isRunning && currentStage && (
+                <div className="border-b border-zinc-800 bg-zinc-900/60 px-4 py-2 flex items-center justify-center gap-6 text-xs font-mono">
                   {[
-                    "Chụp màn hình và tóm tắt nội dung",
-                    "Mở Notepad và ghi chú lại thông tin",
-                    "Kiểm tra các tiến trình đang chiếm RAM trong máy",
-                  ].map((sug) => (
-                    <button
-                      key={sug}
-                      type="button"
-                      onClick={() => setInputPrompt(sug)}
-                      className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300 hover:border-cyan-500/40 hover:bg-zinc-800/80 transition"
-                    >
-                      {sug}
-                    </button>
-                  ))}
+                    { id: 'analyzing', label: '1. Phân tích màn hình' },
+                    { id: 'planning', label: '2. Lập kế hoạch' },
+                    { id: 'executing', label: '3. Thực thi hành động' },
+                    { id: 'verifying', label: '4. Kiểm tra kết quả' },
+                  ].map((st) => {
+                    const isActive = currentStage === st.id;
+                    return (
+                      <div
+                        key={st.id}
+                        className={`flex items-center gap-1.5 transition ${
+                          isActive ? 'text-cyan-400 font-bold scale-105' : 'text-zinc-600'
+                        }`}
+                      >
+                        {isActive && <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />}
+                        <span>{st.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Workstream Feed */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                {workstream.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center text-center p-8 space-y-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-900 border border-zinc-800 text-cyan-400 shadow-inner">
+                      <Bot className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-base font-semibold text-white">
+                      Xin chào {profile?.pronoun} {profile?.name}!
+                    </h3>
+                    <p className="max-w-md text-xs text-zinc-400 leading-relaxed">
+                      Orbis Agent đã kết nối với <strong className="text-zinc-200">{config?.provider.toUpperCase()}</strong>. Hãy nhập yêu cầu để Agent tự động hóa công việc trên máy tính của {profile?.pronoun}.
+                    </p>
+                    <div className="flex flex-wrap justify-center gap-2 pt-2">
+                      {[
+                        "Chụp màn hình và tóm tắt nội dung",
+                        "Mở Notepad và ghi chú lại thông tin",
+                        "Kiểm tra các tiến trình đang chiếm RAM trong máy",
+                      ].map((sug) => (
+                        <button
+                          key={sug}
+                          type="button"
+                          onClick={() => setInputPrompt(sug)}
+                          className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-300 hover:border-cyan-500/40 hover:bg-zinc-800/80 transition"
+                        >
+                          {sug}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  workstream.map((item) => (
+                    <WorkstreamCard
+                      key={item.id}
+                      item={item}
+                      onConfirmAction={handleConfirmAction}
+                    />
+                  ))
+                )}
+                <div ref={workstreamEndRef} />
+              </div>
+
+              {/* Bottom Command Bar (DeepSeek / OperUI style + Sandbox Execution Policy Popover) */}
+              <div className="border-t border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-md">
+                <div className="mx-auto max-w-4xl space-y-2">
+                  <div className="relative flex items-center rounded-2xl border border-zinc-700/70 bg-zinc-900 p-2 shadow-2xl focus-within:border-cyan-400 focus-within:ring-1 focus-within:ring-cyan-400 transition">
+                    {/* Sandbox Execution Policy Selector (giống hệt giao diện trong ảnh) */}
+                    <div className="relative" ref={policyMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setShowPolicyMenu((prev) => !prev)}
+                        className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition ${
+                          sandboxPolicy === 'turbo'
+                            ? 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                            : 'border-zinc-700/80 bg-zinc-800/90 text-zinc-200 hover:bg-zinc-800 hover:text-white'
+                        }`}
+                        title="Chọn chế độ phê duyệt lệnh Sandbox (Request Review / Default / Auto / Turbo)"
+                      >
+                        <PolicyShieldIcon policy={sandboxPolicy} className="h-4 w-4 shrink-0" />
+                        <span>{currentPolicyObj.label}</span>
+                        <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
+                      </button>
+
+                      {/* Popover Menu 4 chế độ chuẩn theo hình mẫu */}
+                      {showPolicyMenu && (
+                        <div className="absolute bottom-full left-0 mb-2.5 w-80 rounded-2xl border border-zinc-800 bg-[#18181b] py-2 shadow-[0_16px_40px_rgba(0,0,0,0.75)] z-50">
+                          {SANDBOX_POLICY_OPTIONS.map((opt) => {
+                            const selected = sandboxPolicy === opt.id;
+                            const lockedTurbo = opt.id === 'turbo' && !sys?.isAdmin;
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => handleSelectPolicy(opt.id)}
+                                className={`flex w-full items-center gap-3.5 px-4 py-3 text-left transition hover:bg-zinc-800/70 ${
+                                  selected ? 'bg-zinc-800/40' : ''
+                                }`}
+                              >
+                                <div className="text-zinc-400 shrink-0">
+                                  <PolicyShieldIcon policy={opt.id} className="h-5 w-5" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[14px] font-medium text-zinc-100 leading-snug">
+                                      {opt.label}
+                                    </span>
+                                    {opt.requiresAdmin && !sys?.isAdmin && (
+                                      <span className="rounded bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300">
+                                        Admin
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[12px] text-zinc-400 leading-snug mt-0.5">
+                                    {opt.desc}
+                                  </div>
+                                </div>
+                                {selected && (
+                                  <Check className="h-4 w-4 text-zinc-200 shrink-0" />
+                                )}
+                                {!selected && lockedTurbo && (
+                                  <span className="text-[10px] text-zinc-500 shrink-0">🔒</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <input
+                      type="text"
+                      disabled={isRunning}
+                      placeholder={`Nhập yêu cầu cho Orbis Agent (${profile?.pronoun || 'bạn'})...`}
+                      value={inputPrompt}
+                      onChange={(e) => setInputPrompt(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleStartTask()}
+                      className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none disabled:opacity-50"
+                    />
+
+                    <div className="flex items-center gap-1.5 pl-2">
+                      <button
+                        type="button"
+                        onClick={handleManualCapture}
+                        title="Chụp màn hình nhanh"
+                        className="rounded-xl p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white transition"
+                      >
+                        <Camera className="h-4 w-4" />
+                      </button>
+
+                      {isRunning ? (
+                        <button
+                          type="button"
+                          onClick={handleEmergencyStop}
+                          className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-md hover:bg-red-500 transition"
+                        >
+                          <Square className="h-3.5 w-3.5 fill-current" />
+                          Dừng
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={!inputPrompt.trim()}
+                          onClick={handleStartTask}
+                          className="flex items-center gap-1.5 rounded-xl bg-cyan-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-cyan-600/20 hover:bg-cyan-500 disabled:opacity-40 transition"
+                        >
+                          <Play className="h-3.5 w-3.5 fill-current" />
+                          Gửi
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1 font-mono">
+                    <span>Nhấn Enter để gửi lệnh · Phím tắt dừng khẩn cấp: Esc × 3</span>
+                    <span>
+                      Chế độ: {mode.toUpperCase()} · Policy: {currentPolicyObj.label.toUpperCase()}
+                    </span>
+                  </div>
                 </div>
               </div>
-            ) : (
-              workstream.map((item) => <WorkstreamCard key={item.id} item={item} />)
-            )}
-            <div ref={workstreamEndRef} />
-          </div>
-
-          {/* Bottom Command Bar (DeepSeek / OperUI style) */}
-          <div className="border-t border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-md">
-            <div className="mx-auto max-w-4xl space-y-2">
-              <div className="relative flex items-center rounded-2xl border border-zinc-700/70 bg-zinc-900 p-2 shadow-2xl focus-within:border-cyan-400 focus-within:ring-1 focus-within:ring-cyan-400 transition">
-                <input
-                  type="text"
-                  disabled={isRunning}
-                  placeholder={`Nhập yêu cầu cho Orbis Agent (${profile?.pronoun || 'bạn'})...`}
-                  value={inputPrompt}
-                  onChange={(e) => setInputPrompt(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleStartTask()}
-                  className="flex-1 bg-transparent px-3 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none disabled:opacity-50"
-                />
-
-                <div className="flex items-center gap-1.5 pl-2">
-                  <button
-                    type="button"
-                    onClick={handleManualCapture}
-                    title="Chụp màn hình nhanh"
-                    className="rounded-xl p-2 text-zinc-400 hover:bg-zinc-800 hover:text-white transition"
-                  >
-                    <Camera className="h-4 w-4" />
-                  </button>
-
-                  {isRunning ? (
-                    <button
-                      type="button"
-                      onClick={handleEmergencyStop}
-                      className="flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-md hover:bg-red-500 transition"
-                    >
-                      <Square className="h-3.5 w-3.5 fill-current" />
-                      Dừng
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={!inputPrompt.trim()}
-                      onClick={handleStartTask}
-                      className="flex items-center gap-1.5 rounded-xl bg-cyan-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-cyan-600/20 hover:bg-cyan-500 disabled:opacity-40 transition"
-                    >
-                      <Play className="h-3.5 w-3.5 fill-current" />
-                      Gửi
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1 font-mono">
-                <span>Nhấn Enter để gửi lệnh · Phím tắt dừng khẩn cấp: Esc × 3</span>
-                <span>Chế độ: {mode.toUpperCase()}</span>
-              </div>
-            </div>
-          </div>
             </>
           )}
         </main>

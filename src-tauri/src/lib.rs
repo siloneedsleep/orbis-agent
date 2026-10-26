@@ -58,6 +58,7 @@ pub fn run() {
             os::sandbox::rollback_sandbox_checkpoint,
             os::sandbox::exec_in_sandbox,
             os::sandbox::place_vm_on_secondary_screen,
+            os::elevation::request_admin_elevation,
             os::pet::get_pet_info,
             os::pet::get_pet_video_base64
         ])

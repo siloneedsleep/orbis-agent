@@ -119,6 +119,7 @@ export const commands = {
   rollbackSandboxCheckpoint: (snapshotName: string) => invoke<string>("rollback_sandbox_checkpoint", { snapshotName }),
   execInSandbox: (guestCmd: string) => invoke<string>("exec_in_sandbox", { guestCmd }),
   placeVmOnSecondaryScreen: () => invoke<string>("place_vm_on_secondary_screen"),
+  requestAdminElevation: () => invoke<string>("request_admin_elevation"),
   getPetInfo: () => invoke<PetInfo>("get_pet_info"),
   getPetVideoBase64: (clipName: string) => invoke<string>("get_pet_video_base64", { clipName }),
 };

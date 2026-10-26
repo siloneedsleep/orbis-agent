@@ -16,12 +16,37 @@ export interface LLMConfig {
   maxPower?: boolean;
 }
 
+export type SandboxExecutionPolicy = 'request_review' | 'default' | 'auto' | 'turbo';
+
+const SANDBOX_POLICY_KEY = 'orbis_sandbox_policy';
+
+export function getStoredSandboxPolicy(): SandboxExecutionPolicy {
+  try {
+    const raw = localStorage.getItem(SANDBOX_POLICY_KEY);
+    if (raw === 'request_review' || raw === 'default' || raw === 'auto' || raw === 'turbo') {
+      return raw;
+    }
+    return 'default';
+  } catch {
+    return 'default';
+  }
+}
+
+export function saveStoredSandboxPolicy(policy: SandboxExecutionPolicy): void {
+  try {
+    localStorage.setItem(SANDBOX_POLICY_KEY, policy);
+  } catch {
+    // ignore
+  }
+}
+
 export interface ActionPayload {
   tool: 'ClickButton' | 'MoveMouse' | 'SendKeystroke' | 'CaptureScreen' | 'ExecutePowerShell' | 'SandboxExec';
   params: Record<string, any>;
   result?: any;
-  status: 'running' | 'success' | 'error';
+  status: 'pending_approval' | 'running' | 'success' | 'error' | 'rejected';
   durationMs?: number;
+  policyMode?: SandboxExecutionPolicy;
 }
 
 export interface WorkstreamItem {
