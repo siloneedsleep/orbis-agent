@@ -70,8 +70,7 @@ export function DashboardApp() {
   const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
 
   const workstreamEndRef = useRef<HTMLDivElement>(null);
-  const isRunningRef = useRef(isRunning);
-  isRunningRef.current = isRunning;
+  const isRunningRef = useRef<boolean>(false);
 
   // Đồng bộ cấu hình đa cửa sổ theo thời gian thực
   useEffect(() => {
@@ -136,6 +135,7 @@ export function DashboardApp() {
 
   // Emergency Kill Switch
   const handleEmergencyStop = () => {
+    isRunningRef.current = false;
     setIsRunning(false);
     setCurrentStage(null);
     events.emitPetState({ state: 'wake', message: 'Đã dừng khẩn cấp!' }).catch(() => {});
@@ -149,9 +149,10 @@ export function DashboardApp() {
   // Run Agent Task Loop
   const handleStartTask = async () => {
     const text = inputPrompt.trim();
-    if (!text || isRunning) return;
+    if (!text || isRunningRef.current) return;
 
     setInputPrompt('');
+    isRunningRef.current = true;
     setIsRunning(true);
     addLog(`Bắt đầu tác vụ: "${text}"`);
 
@@ -163,39 +164,44 @@ export function DashboardApp() {
 
     const brain = new AgentBrain();
     let loopCount = 0;
-    const maxLoops = 15;
+    const maxLoops = mode === 'chat' ? 1 : 15;
+    const actionHistory: string[] = [];
 
     try {
       while (isRunningRef.current && loopCount < maxLoops) {
         loopCount++;
 
-        // Phase 1: Analyzing Screen
-        setCurrentStage('analyzing');
-        events.emitPetState({ state: 'thinking', message: 'Em đang quan sát màn hình...' }).catch(() => {});
-        addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 1: Phân tích màn hình...`);
-        
+        // Phase 1: Analyzing Screen (Bỏ qua chụp màn hình nếu đang ở chế độ Chat thông thường để phản hồi nhanh hơn)
         let screenData: string | undefined = undefined;
-        try {
-          if (layout && layout.monitors.length > 0) {
-            const p = layout.monitors.find(m => m.primary) || layout.monitors[0];
-            screenData = await commands.captureScreenRegion(p.x, p.y, p.width, p.height);
-            setLastScreenshot(screenData);
+        const needsScreen = mode !== 'chat' || /màn hình|chụp|ảnh|screen|xem/i.test(text);
+
+        if (needsScreen) {
+          setCurrentStage('analyzing');
+          events.emitPetState({ state: 'thinking', message: 'Em đang quan sát màn hình...' }).catch(() => {});
+          addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 1: Phân tích màn hình...`);
+          try {
+            if (layout && layout.monitors.length > 0) {
+              const p = layout.monitors.find(m => m.primary) || layout.monitors[0];
+              screenData = await commands.captureScreenRegion(p.x, p.y, p.width, p.height);
+              setLastScreenshot(screenData);
+            }
+          } catch (captureErr) {
+            addLog(`Không chụp được màn hình: ${captureErr}`);
           }
-        } catch (captureErr) {
-          addLog(`Không chụp được màn hình: ${captureErr}`);
         }
 
         // Phase 2: Planning Move (Reasoning with Hybrid Fallback)
         setCurrentStage('planning');
-        addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 2: Lập kế hoạch suy luận (LLM)...`);
-        
-        const plan = await planStepWithHybridFallback(brain, text, screenData);
+        events.emitPetState({ state: 'thinking', message: 'Em đang suy nghĩ câu trả lời...' }).catch(() => {});
+        addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 2: Gọi mô hình LLM (${config?.provider || 'ollama'}: ${config?.model || 'auto'})...`);
+
+        const plan = await planStepWithHybridFallback(brain, text, screenData, mode, actionHistory);
         if (plan.usedFallback) {
           addLog(`[HybridFallback] Đã tự động chuyển sang phương án LLM dự phòng thành công.`);
         }
 
-        // Hiển thị Chain of Thought
-        if (plan.thought) {
+        // Hiển thị Chain of Thought (nếu khác với nội dung trả lời cuối)
+        if (plan.thought && plan.thought !== plan.message && plan.thought !== "Đang xử lý yêu cầu...") {
           addItem({
             type: 'thinking',
             content: plan.thought,
@@ -204,19 +210,20 @@ export function DashboardApp() {
 
         // Phase 3: Executing Action
         setCurrentStage('executing');
-        events.emitPetState({ state: 'executing', message: `Em đang thực hiện ${plan.action.type}...` }).catch(() => {});
-        addLog(`[Vòng ${loopCount}] Giai đoạn 3: Thực thi hành động [${plan.action.type}]`);
+        addLog(`[Vòng ${loopCount}] Giai đoạn 3: Kết quả suy luận [${plan.action.type}]`);
 
-        if (plan.action.type === 'done') {
+        if (mode === 'chat' || plan.action.type === 'done') {
           events.emitPetState({ state: 'done', message: 'Tác vụ đã hoàn thành xuất sắc! ✨' }).catch(() => {});
           const updatedCat = addCatExp(15);
           setCatSettings(updatedCat);
           addItem({
             type: 'assistant',
-            content: plan.message || 'Tác vụ đã hoàn thành.',
+            content: plan.message || plan.thought || 'Tác vụ đã hoàn thành.',
           });
           break;
         }
+
+        events.emitPetState({ state: 'executing', message: `Em đang thực hiện ${plan.action.type}...` }).catch(() => {});
 
         // Tạo action card
         let toolName: any = 'ClickButton';
@@ -237,6 +244,7 @@ export function DashboardApp() {
         const startT = Date.now();
         const execResult = await brain.executeAction(plan.action);
         const duration = Date.now() - startT;
+        actionHistory.push(`${plan.action.type}: ${JSON.stringify(plan.action)}`);
 
         // Cập nhật card thành công
         setWorkstream(prev => prev.map(it => {
@@ -260,12 +268,14 @@ export function DashboardApp() {
         await new Promise(r => setTimeout(r, 600));
       }
     } catch (err: any) {
-      addLog(`Lỗi thực thi vòng lặp: ${err.message}`);
+      const errMsg = err?.message || String(err);
+      addLog(`Lỗi thực thi vòng lặp: ${errMsg}`);
       addItem({
         type: 'assistant',
-        content: `❌ Gặp lỗi trong quá trình xử lý: ${err.message}`,
+        content: `❌ Gặp lỗi trong quá trình xử lý: ${errMsg}`,
       });
     } finally {
+      isRunningRef.current = false;
       setIsRunning(false);
       setCurrentStage(null);
       addLog("Kết thúc tác vụ.");

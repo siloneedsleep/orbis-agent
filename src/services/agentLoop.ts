@@ -16,6 +16,8 @@ export interface AgentStepResult {
   usedFallback?: boolean;
 }
 
+export type ExecutionMode = 'computer_use' | 'sandbox' | 'chat' | 'teach_cat';
+
 export class AgentBrain {
   private getSystemPrompt(): string {
     const profile = getStoredProfile();
@@ -61,6 +63,8 @@ export class AgentBrain {
         message = parsed.reply.trim();
       } else if (typeof parsed.answer === "string" && parsed.answer.trim()) {
         message = parsed.answer.trim();
+      } else if (typeof parsed.content === "string" && parsed.content.trim()) {
+        message = parsed.content.trim();
       }
 
       // 2. Cơ chế tương thích ngược: nếu có trường `action` nhưng thiếu trường `type`
@@ -156,14 +160,32 @@ export class AgentBrain {
   async planNextMove(
     userPrompt: string,
     screenBase64?: string,
-    overrideConfig?: LLMConfig | null
+    overrideConfig?: LLMConfig | null,
+    executionMode: ExecutionMode = 'computer_use',
+    actionHistory: string[] = []
   ): Promise<AgentStepResult> {
     const config = overrideConfig || getStoredLLMConfig();
+    const profile = getStoredProfile();
+    const pronoun = profile?.pronoun || 'anh';
+    const userName = profile?.name || 'Silo';
     const systemPrompt = this.getSystemPrompt();
+
+    const historySection =
+      actionHistory.length > 0
+        ? `\nLịch sử các bước đã thực hiện trước đó:\n${actionHistory.map((h, i) => `${i + 1}. ${h}`).join('\n')}\nNếu mục tiêu đã đạt được, hãy trả về "type": "done".`
+        : '';
+
+    const modeSection =
+      executionMode === 'chat'
+        ? `\n[CHẾ ĐỘ HIỆN TẠI: CHAT ASSISTANT - TRÒ CHUYỆN TRỰC TIẾP]\nBắt buộc trả về "type": "done" và viết câu trả lời tự nhiên, lễ phép, chi tiết cho ${pronoun} ${userName} vào trường "message". Tuyệt đối KHÔNG trả về mouse_move hay mouse_click trong chế độ Chat.`
+        : executionMode === 'sandbox'
+        ? `\n[CHẾ ĐỘ HIỆN TẠI: DETONATION SANDBOX]\nƯu tiên dùng "type": "sandbox_exec" nếu cần chạy lệnh kiểm thử cô lập, hoặc "type": "done" nếu trả lời trực tiếp.`
+        : '';
+
     const userInstruction =
-      `Yêu cầu hiện tại của người dùng: "${userPrompt}"\n` +
+      `Yêu cầu hiện tại của ${pronoun} ${userName}: "${userPrompt}"${modeSection}${historySection}\n` +
       `Hãy trả về DUY NHẤT 1 JSON object hợp lệ có khóa "type" ("done" | "mouse_move" | "mouse_click" | "keyboard_type" | "sandbox_exec"), "thought" và "message".\n` +
-      `Ví dụ nếu trả lời hoặc báo cáo kết quả: {"type": "done", "thought": "Đã phân tích yêu cầu của người dùng", "message": "Nội dung câu trả lời chi tiết tại đây"}`;
+      `Ví dụ phản hồi chuẩn: {"type": "done", "thought": "Đã phân tích yêu cầu của ${pronoun} ${userName}", "message": "Dạ chào ${pronoun} ${userName}! Em có thể hỗ trợ gì cho ${pronoun} ạ?"}`;
 
     let replyContent = "";
     const isLocalMode = !config || config.mode === 'local' || config.type === 'local' || config.provider === 'ollama';
@@ -270,7 +292,6 @@ export class AgentBrain {
         replyContent = cloudRes.content;
       } catch (rustCloudErr: any) {
         const errStr = String(rustCloudErr?.message || rustCloudErr || '');
-        // Nếu lỗi là lỗi xác thực / hết tiền / rate limit từ API thật, ném ra ngay để HybridFallback xử lý
         if (
           errStr.includes('429') ||
           errStr.includes('402') ||
@@ -294,7 +315,11 @@ export class AgentBrain {
       }
     }
 
-    return this.preprocessAndParseLLMOutput(replyContent);
+    const result = this.preprocessAndParseLLMOutput(replyContent);
+    if (executionMode === 'chat' && result.action.type !== 'done') {
+      result.action = { type: 'done', message: result.message || result.thought };
+    }
+    return result;
   }
 
   private async callCloudFetchFallback(

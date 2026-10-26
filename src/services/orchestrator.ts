@@ -1,4 +1,4 @@
-import { AgentBrain, AgentStepResult } from "./agentLoop";
+import { AgentBrain, AgentStepResult, ExecutionMode } from "./agentLoop";
 import { commands } from "@/ipc/commands";
 import { events } from "@/ipc/events";
 import { getStoredLLMConfig, LLMConfig, addCatExp } from "@/state/agentStore";
@@ -50,7 +50,9 @@ function resolveCloudFallbackConfig(current: LLMConfig | null): LLMConfig | null
 export async function planStepWithHybridFallback(
   brain: AgentBrain,
   goal: string,
-  screenContext?: string
+  screenContext?: string,
+  executionMode: ExecutionMode = 'computer_use',
+  actionHistory: string[] = []
 ): Promise<AgentStepResult> {
   // Luôn đọc cấu hình LLM mới nhất từ agentStore trước mỗi bước
   const latestConfig = getStoredLLMConfig();
@@ -61,7 +63,7 @@ export async function planStepWithHybridFallback(
     latestConfig.provider === 'ollama';
 
   try {
-    return await brain.planNextMove(goal, screenContext, latestConfig);
+    return await brain.planNextMove(goal, screenContext, latestConfig, executionMode, actionHistory);
   } catch (primaryErr: any) {
     const errMsg = String(primaryErr?.message || primaryErr || '');
     console.warn(`[HybridFallback] Bước suy luận chính (${isLocal ? 'Local' : 'Cloud'}) gặp lỗi:`, errMsg);
@@ -72,7 +74,7 @@ export async function planStepWithHybridFallback(
       if (cloudFallback) {
         try {
           console.info(`[HybridFallback] Chuyển hướng dự phòng từ Local Ollama sang Cloud (${cloudFallback.provider})...`);
-          const step = await brain.planNextMove(goal, screenContext, cloudFallback);
+          const step = await brain.planNextMove(goal, screenContext, cloudFallback, executionMode, actionHistory);
           return { ...step, usedFallback: true };
         } catch (cloudErr) {
           console.warn("[HybridFallback] Cloud dự phòng cũng thất bại:", cloudErr);
@@ -91,7 +93,7 @@ export async function planStepWithHybridFallback(
           localModel: latestConfig?.localModel || 'auto',
           maxPower: latestConfig?.maxPower ?? true,
         };
-        const step = await brain.planNextMove(goal, screenContext, localFallback);
+        const step = await brain.planNextMove(goal, screenContext, localFallback, executionMode, actionHistory);
         return { ...step, usedFallback: true };
       } catch (localErr) {
         console.warn("[HybridFallback] Local Ollama dự phòng cũng thất bại:", localErr);
@@ -110,6 +112,7 @@ export class OrbisOrchestrator {
   async startTask(goal: string) {
     this.isRunning = true;
     let stepCount = 0;
+    const actionHistory: string[] = [];
     console.log("Starting task:", goal);
 
     while (this.isRunning && stepCount < this.maxSteps) {
@@ -134,7 +137,13 @@ export class OrbisOrchestrator {
         }
 
         // 2. Plan: Đọc cấu hình mới nhất từ agentStore & gọi LLM kèm Hybrid Fallback
-        const step = await planStepWithHybridFallback(this.brain, goal, screenContext);
+        const step = await planStepWithHybridFallback(
+          this.brain,
+          goal,
+          screenContext,
+          'computer_use',
+          actionHistory
+        );
 
         if (step.action.type === 'done') {
           console.log("Task completed:", step.message);
@@ -147,6 +156,7 @@ export class OrbisOrchestrator {
         // 3. Act: Execute OS / Sandbox action
         events.emitPetState({ state: 'executing', message: `Đang thực hiện: ${step.action.type}...` }).catch(() => {});
         await this.brain.executeAction(step.action);
+        actionHistory.push(`${step.action.type}: ${JSON.stringify(step.action)}`);
 
         // Độ trễ ngắn giữa các bước để giao diện OS kịp phản hồi
         await new Promise((resolve) => setTimeout(resolve, 1000));
