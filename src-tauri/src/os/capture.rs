@@ -37,7 +37,8 @@ pub fn capture_screen_region(x: i32, y: i32, width: i32, height: i32) -> Result<
     let crop_h = (height.max(1) as u32).min(mon_h.saturating_sub(crop_y));
 
     let cropped = imageops::crop_imm(&full_image, crop_x, crop_y, crop_w, crop_h).to_image();
-    let dyn_image = DynamicImage::ImageRgba8(cropped);
+    let rgb_image = DynamicImage::ImageRgba8(cropped).into_rgb8();
+    let dyn_image = DynamicImage::ImageRgb8(rgb_image);
 
     let mut buffer = Cursor::new(Vec::new());
     dyn_image

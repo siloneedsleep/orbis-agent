@@ -357,6 +357,11 @@ export class AgentBrain {
     userInstruction: string,
     screenBase64?: string
   ): Promise<string> {
+    const imgMime =
+      screenBase64 && screenBase64.trimStart().startsWith('data:image/png')
+        ? 'image/png'
+        : 'image/jpeg';
+
     if (provider === 'gemini') {
       const model =
         rawModel && rawModel.toLowerCase().includes('gemini')
@@ -368,7 +373,7 @@ export class AgentBrain {
       if (screenBase64) {
         parts.push({
           inlineData: {
-            mimeType: "image/png",
+            mimeType: imgMime,
             data: screenBase64.replace(/^data:image\/[a-z]+;base64,/, ''),
           },
         });
@@ -404,7 +409,7 @@ export class AgentBrain {
         const cleanB64 = screenBase64.replace(/^data:image\/[a-z]+;base64,/, '');
         userContent.push({
           type: "image_url",
-          image_url: { url: `data:image/png;base64,${cleanB64}` },
+          image_url: { url: `data:${imgMime};base64,${cleanB64}` },
         });
       }
 
@@ -442,7 +447,7 @@ export class AgentBrain {
           type: "image",
           source: {
             type: "base64",
-            media_type: "image/png",
+            media_type: imgMime,
             data: screenBase64.replace(/^data:image\/[a-z]+;base64,/, ''),
           },
         });

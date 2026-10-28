@@ -170,6 +170,7 @@ export function DashboardApp() {
       setProfile(getStoredProfile());
       setConfig(getStoredLLMConfig());
       setCatSettings(getStoredCatSettings());
+      setSandboxPolicy(getStoredSandboxPolicy());
     });
     return unsubscribe;
   }, []);
@@ -177,6 +178,7 @@ export function DashboardApp() {
   // Poll system status & layout
   useEffect(() => {
     let cancelled = false;
+    let unlistenPanic: (() => void) | null = null;
 
     commands.getOverlayLayout()
       .then((l) => !cancelled && setLayout(l))
@@ -201,12 +203,21 @@ export function DashboardApp() {
     pollSys();
     const timer = setInterval(pollSys, 1500);
 
-    // Kích hoạt Panic Hook khẩn cấp
+    // Kích hoạt Panic Hook khẩn cấp (3x ESC) và lắng nghe sự kiện dừng khẩn cấp
     commands.setupPanicHook().catch(() => {});
+    events.onPanic(() => {
+      if (!cancelled) {
+        handleEmergencyStop();
+      }
+    }).then((un) => {
+      if (cancelled) un();
+      else unlistenPanic = un;
+    }).catch(() => {});
 
     return () => {
       cancelled = true;
       clearInterval(timer);
+      if (unlistenPanic) unlistenPanic();
     };
   }, []);
 

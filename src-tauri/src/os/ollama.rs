@@ -575,6 +575,16 @@ pub async fn cloud_llm_chat(
 
     let provider_lower = provider.trim().to_lowercase();
     let resolved_model = sanitize_cloud_model(&provider_lower, model);
+    let img_mime = image_base64
+        .as_deref()
+        .map(|s| {
+            if s.trim_start().starts_with("data:image/png") {
+                "image/png"
+            } else {
+                "image/jpeg"
+            }
+        })
+        .unwrap_or("image/jpeg");
     let clean_img = image_base64
         .map(|s| {
             if let Some(idx) = s.find(";base64,") {
@@ -664,7 +674,7 @@ pub async fn cloud_llm_chat(
             if let Some(ref b64) = clean_img {
                 parts.push(json!({
                     "inlineData": {
-                        "mimeType": "image/png",
+                        "mimeType": img_mime,
                         "data": b64
                     }
                 }));
@@ -676,7 +686,7 @@ pub async fn cloud_llm_chat(
                 },
                 "contents": [{
                     "role": "user",
-                    "parts": parts
+                    "parts": parts.clone()
                 }],
                 "generationConfig": {
                     "responseMimeType": "application/json",
@@ -713,7 +723,7 @@ pub async fn cloud_llm_chat(
                     },
                     "contents": [{
                         "role": "user",
-                        "parts": [{ "text": user_prompt }]
+                        "parts": parts
                     }],
                     "generationConfig": {
                         "responseMimeType": "application/json",
@@ -753,7 +763,7 @@ pub async fn cloud_llm_chat(
                 user_content.push(json!({
                     "type": "image_url",
                     "image_url": {
-                        "url": format!("data:image/png;base64,{b64}")
+                        "url": format!("data:{img_mime};base64,{b64}")
                     }
                 }));
             }
@@ -806,7 +816,7 @@ pub async fn cloud_llm_chat(
                     "type": "image",
                     "source": {
                         "type": "base64",
-                        "media_type": "image/png",
+                        "media_type": img_mime,
                         "data": b64
                     }
                 }));

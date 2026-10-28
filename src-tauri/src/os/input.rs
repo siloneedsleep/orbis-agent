@@ -125,8 +125,13 @@ pub fn mouse_click(button: String) {
     let _ = enigo.button(btn, Direction::Click);
 }
 
+static PANIC_HOOK_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[tauri::command]
 pub fn setup_panic_hook(app: tauri::AppHandle) {
+    if PANIC_HOOK_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     println!("Panic hook ready: Listening for 3x ESC presses");
     
     std::thread::spawn(move || {
@@ -145,9 +150,9 @@ pub fn setup_panic_hook(app: tauri::AppHandle) {
                 last_press_time = now;
 
                 if esc_count >= 3 {
-                    println!("[ORBIS] PANIC TRIGGERED!");
+                    println!("[ORBIS] PANIC TRIGGERED! Stopping active agent tasks...");
                     let _ = app.emit("orbis:panic", ());
-                    std::process::exit(0);
+                    esc_count = 0;
                 }
             }
             thread::sleep(Duration::from_millis(10));

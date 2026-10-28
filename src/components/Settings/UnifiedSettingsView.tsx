@@ -148,10 +148,44 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
   };
 
   useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
+  useEffect(() => {
     if (activeTab === 'llm' && llmType === 'local') {
       scanOllama();
     }
   }, [activeTab, llmType]);
+
+  // Tự động đồng bộ cấu hình MCP từ ~/.gemini/config/mcp_config.json nếu có server chưa nạp token
+  useEffect(() => {
+    const current = getStoredMcpServers();
+    if (current.some((s) => !s.authToken)) {
+      commands.readSystemMcpConfig().then((res) => {
+        if (!res.exists || res.servers.length === 0) return;
+        const updatedList = [...current];
+        let changed = false;
+        for (const sysSrv of res.servers) {
+          const existingIdx = updatedList.findIndex(
+            (s) =>
+              s.name.toLowerCase() === sysSrv.name.toLowerCase() ||
+              (s.serverUrl && s.serverUrl === sysSrv.serverUrl)
+          );
+          if (existingIdx >= 0 && !updatedList[existingIdx].authToken && sysSrv.authToken) {
+            updatedList[existingIdx] = {
+              ...updatedList[existingIdx],
+              authToken: sysSrv.authToken,
+            };
+            changed = true;
+          }
+        }
+        if (changed) {
+          setMcpServers(updatedList);
+          saveStoredMcpServers(updatedList);
+        }
+      }).catch(() => {});
+    }
+  }, []);
 
   // Đồng bộ MCP từ ~/.gemini/config/mcp_config.json
   const handleSyncFromSystemMcp = async () => {
@@ -405,7 +439,18 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
   };
 
   // Lưu Sandbox Policy
-  const handleSelectPolicy = (p: SandboxExecutionPolicy) => {
+  const handleSelectPolicy = async (p: SandboxExecutionPolicy) => {
+    if (p === 'turbo' && !isAdmin) {
+      try {
+        saveStoredSandboxPolicy('turbo');
+        const msg = await commands.requestAdminElevation();
+        setSandboxMsg(msg);
+      } catch (e: any) {
+        setSandboxMsg(`Chế độ Turbo cần quyền Administrator: ${e?.message || e}`);
+      }
+      setTimeout(() => setSandboxMsg(null), 4000);
+      return;
+    }
     setSandboxPolicy(p);
     saveStoredSandboxPolicy(p);
     setSandboxMsg(`Đã lưu chính sách: ${p}`);

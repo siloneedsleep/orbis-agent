@@ -4,6 +4,7 @@ export const EVENTS = {
   wake: "orbis:wake",
   demo: "orbis:demo",
   petState: "orbis:pet_state",
+  panic: "orbis:panic",
 } as const;
 
 export type DemoAction = "think" | "idle" | "fly";
@@ -30,5 +31,6 @@ export const events = {
     listen<DemoPayload>(EVENTS.demo, (e) => cb(e.payload)),
   onPetState: (cb: (payload: PetEventPayload) => void): Promise<UnlistenFn> =>
     listen<PetEventPayload>(EVENTS.petState, (e) => cb(e.payload)),
+  onPanic: (cb: () => void): Promise<UnlistenFn> => listen(EVENTS.panic, () => cb()),
 };
 

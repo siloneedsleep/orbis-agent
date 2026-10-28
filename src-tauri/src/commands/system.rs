@@ -94,6 +94,45 @@ pub async fn trigger_n8n_webhook(
     }
 }
 
+fn resolve_mcp_auth_token(server_url: &str, provided_token: Option<String>) -> Option<String> {
+    if let Some(token) = provided_token.filter(|t| !t.trim().is_empty()) {
+        return Some(token.trim().to_string());
+    }
+
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+    let config_path = std::path::Path::new(&home)
+        .join(".gemini")
+        .join("config")
+        .join("mcp_config.json");
+
+    let content = std::fs::read_to_string(config_path).ok()?;
+    let parsed: Value = serde_json::from_str(&content).ok()?;
+    let mcp_servers = parsed.get("mcpServers")?.as_object()?;
+
+    let target_url = server_url.trim().trim_end_matches('/');
+    for (_name, cfg) in mcp_servers {
+        let cfg_url = cfg
+            .get("serverUrl")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches('/');
+        if !cfg_url.is_empty() && cfg_url.eq_ignore_ascii_case(target_url) {
+            if let Some(auth) = cfg
+                .get("headers")
+                .and_then(|h| h.get("Authorization").or_else(|| h.get("authorization")))
+                .and_then(|a| a.as_str())
+            {
+                let cleaned = auth.replace("Bearer ", "").trim().to_string();
+                if !cleaned.is_empty() {
+                    return Some(cleaned);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn parse_mcp_response(text: &str) -> Result<Value, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -102,6 +141,7 @@ fn parse_mcp_response(text: &str) -> Result<Value, String> {
 
     // Nếu trả về theo giao thức Server-Sent Events (SSE)
     if trimmed.starts_with("event:") || trimmed.contains("data:") {
+        let mut last_valid_json: Option<Value> = None;
         for line in trimmed.lines() {
             let line_trimmed = line.trim();
             if let Some(data_str) = line_trimmed.strip_prefix("data:") {
@@ -111,10 +151,16 @@ fn parse_mcp_response(text: &str) -> Result<Value, String> {
                         if let Some(err) = v.get("error") {
                             return Err(format!("Lỗi MCP: {}", err));
                         }
-                        return Ok(v);
+                        if v.get("result").is_some() {
+                            return Ok(v);
+                        }
+                        last_valid_json = Some(v);
                     }
                 }
             }
+        }
+        if let Some(v) = last_valid_json {
+            return Ok(v);
         }
     }
 
@@ -149,7 +195,7 @@ pub async fn test_mcp_connection(
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json");
 
-    if let Some(token) = auth_token.filter(|t| !t.trim().is_empty()) {
+    if let Some(token) = resolve_mcp_auth_token(url, auth_token) {
         let auth_val = if token.starts_with("Bearer ") {
             token
         } else {
@@ -222,7 +268,7 @@ pub async fn call_mcp_tool(
         .header("Accept", "application/json, text/event-stream")
         .header("Content-Type", "application/json");
 
-    if let Some(token) = auth_token.filter(|t| !t.trim().is_empty()) {
+    if let Some(token) = resolve_mcp_auth_token(url, auth_token) {
         let auth_val = if token.starts_with("Bearer ") {
             token
         } else {

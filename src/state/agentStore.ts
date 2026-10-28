@@ -35,6 +35,7 @@ export function getStoredSandboxPolicy(): SandboxExecutionPolicy {
 export function saveStoredSandboxPolicy(policy: SandboxExecutionPolicy): void {
   try {
     localStorage.setItem(SANDBOX_POLICY_KEY, policy);
+    storeListeners.forEach((listener) => listener());
   } catch {
     // ignore
   }
@@ -47,10 +48,11 @@ export interface N8nConfig {
 }
 
 const N8N_KEY = 'orbis_n8n_config';
+// Không bao giờ hardcode token trong mã nguồn (repo public). Webhook orbis-bridge không yêu cầu auth.
 export const DEFAULT_N8N_CONFIG: N8nConfig = {
   enabled: true,
   webhookUrl: 'https://siloneedsleep.app.n8n.cloud/webhook/orbis-bridge',
-  apiKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYzQxOWM3Yy01OWViLTQwYjItYTMxMC03MGVhOTlkMzY0N2IiLCJpc3MiOiJuOG4iLCJqdGkiOiJjZTNhYWE1ZS00ZTFjLTRjN2QtOWE5NC0zOTYzMzdkYzIwNzgiLCJpYXQiOjE3OTMxMTA5MTMsImF1ZCI6Im1jcC1zZXJ2ZXItYXBpIn0.NI-k02e1Z_4BSESEHSQ_Fs2hybySS1omt-Fr0rw7YW0',
+  apiKey: '',
 };
 
 export function getStoredN8nConfig(): N8nConfig {
@@ -66,6 +68,7 @@ export function getStoredN8nConfig(): N8nConfig {
 export function saveStoredN8nConfig(cfg: N8nConfig): void {
   try {
     localStorage.setItem(N8N_KEY, JSON.stringify(cfg));
+    storeListeners.forEach((listener) => listener());
   } catch {
     // ignore
   }
@@ -92,13 +95,14 @@ export interface McpServerConfig {
 }
 
 const MCP_SERVERS_KEY = 'orbis_mcp_servers';
+// Token để trống: backend Rust tự lấy Authorization từ ~/.gemini/config/mcp_config.json (không lưu secret trong mã nguồn).
 export const DEFAULT_MCP_SERVERS: McpServerConfig[] = [
   {
     id: 'mcp-n8n',
     name: 'n8n Cloud MCP Server',
     type: 'http',
     serverUrl: 'https://siloneedsleep.app.n8n.cloud/mcp-server/http',
-    authToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYzQxOWM3Yy01OWViLTQwYjItYTMxMC03MGVhOTlkMzY0N2IiLCJpc3MiOiJuOG4iLCJqdGkiOiJjZTNhYWE1ZS00ZTFjLTRjN2QtOWE5NC0zOTYzMzdkYzIwNzgiLCJpYXQiOjE3OTMxMTA5MTMsImF1ZCI6Im1jcC1zZXJ2ZXItYXBpIn0.NI-k02e1Z_4BSESEHSQ_Fs2hybySS1omt-Fr0rw7YW0',
+    authToken: '',
     enabled: true,
   }
 ];
@@ -108,7 +112,7 @@ export function getStoredMcpServers(): McpServerConfig[] {
     const raw = localStorage.getItem(MCP_SERVERS_KEY);
     if (!raw) return DEFAULT_MCP_SERVERS;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_MCP_SERVERS;
+    return Array.isArray(parsed) ? parsed : DEFAULT_MCP_SERVERS;
   } catch {
     return DEFAULT_MCP_SERVERS;
   }
@@ -256,6 +260,7 @@ export function getStoredCatSettings(): CatSettings {
 
 export function saveStoredCatSettings(settings: CatSettings): void {
   localStorage.setItem(CAT_KEY, JSON.stringify(settings));
+  storeListeners.forEach((listener) => listener());
 }
 
 export function addCatExp(amount: number): CatSettings {
@@ -484,13 +489,24 @@ export function buildSystemPrompt(profile?: UserProfile | null, catSettings?: Ca
       activeSkills.map(s => `- [${s.name}]: ${s.trigger} -> ${s.actionPrompt}`).join('\n')
     : '';
 
+  const enabledMcp = getStoredMcpServers().filter(s => s.enabled);
+  const mcpPrompt = enabledMcp.length > 0
+    ? `\nCác máy chủ MCP (Model Context Protocol) đang kết nối:\n` +
+      enabledMcp.map(s => {
+        const toolNames = s.tools && s.tools.length > 0
+          ? s.tools.map(t => t.name).join(', ')
+          : 'search_workflows, execute_workflow, get_workflow_details';
+        return `- Server "${s.name}" (id: "${s.id}"): hỗ trợ các tools [${toolNames}]`;
+      }).join('\n')
+    : '';
+
   return `Bạn là Orbis Agent - Trợ lý AI và Hệ thống Tự động hóa Desktop chuyên biệt cho Windows (theo kiến trúc OperUI / DeepSeek Harness).
 Linh vật đồng hành của hệ thống: Chú mèo công nghệ tên là "${cat.name}" (Mèo Xanh Cyber Cat, Cấp độ thân thiết: ${cat.bondLevel}/10).
 
 Thông tin người dùng:
 - Tên: ${userName}
 - Đại từ nhân xưng: Hãy gọi người dùng là "${pronoun}" và xưng là "tôi" hoặc "${cat.name}" một cách lịch sự, nhã nhặn, tôn trọng và chuyên nghiệp.
-${skillsPrompt}
+${skillsPrompt}${mcpPrompt}
 
 Nhiệm vụ của bạn:
 1. Tiếp nhận yêu cầu của ${pronoun} ${userName}.
@@ -506,12 +522,14 @@ Nhiệm vụ của bạn:
   { "type": "sandbox_exec", "command": "Lệnh thực thi", "requireCheckpoint": true, "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
 - Kích hoạt n8n Cloud Automation / Webhook (gửi email, cào web, thông báo Telegram, kết nối GitHub):
   { "type": "n8n_execute", "workflow": "Tên tác vụ (vd: send_email, scrape_web, notify_telegram, sync_github)", "payload": { "key": "value" }, "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
+- Gọi công cụ MCP (Model Context Protocol - tìm kiếm/chạy workflow n8n hoặc gọi MCP tool):
+  { "type": "mcp_call", "server": "mcp-n8n", "tool": "search_workflows", "arguments": { "query": "" }, "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
 - Hoàn tất tác vụ / Trả lời người dùng:
   { "type": "done", "message": "Câu trả lời hoặc báo cáo hoàn tất cho ${pronoun} ${userName}", "thought": "Suy nghĩ phân tích..." }
 
 Quy tắc bảo mật & an toàn:
 - Nếu thao tác liên quan đến lệnh hệ thống nguy hiểm (xóa tệp, can thiệp registry, cài đặt phần mềm không rõ nguồn gốc), BẮT BUỘC thực thi trong Sandbox (type: "sandbox_exec").
-- Nếu thao tác liên quan đến dịch vụ Cloud/Web (gửi mail, thông báo, trigger n8n), BẮT BUỘC sử dụng n8n Cloud (type: "n8n_execute").
+- Nếu thao tác liên quan đến dịch vụ Cloud/Web hoặc MCP (gửi mail, thông báo, quản lý workflow n8n), ưu tiên sử dụng "mcp_call" hoặc "n8n_execute".
 - Luôn giữ thái độ phục vụ tận tâm, ngắn gọn và chính xác.`;
 }
 

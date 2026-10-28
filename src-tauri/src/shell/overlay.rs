@@ -31,10 +31,8 @@ pub struct OverlayLayout {
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::HWND,
-    Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_EXCLUDED_FROM_PEEK},
     UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowDisplayAffinity, SetWindowLongPtrW, GWL_EXSTYLE,
-        WDA_EXCLUDEFROMCAPTURE, WS_EX_LAYERED, WS_EX_TRANSPARENT,
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT,
     },
 };
 
