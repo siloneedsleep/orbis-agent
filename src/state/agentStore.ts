@@ -40,8 +40,91 @@ export function saveStoredSandboxPolicy(policy: SandboxExecutionPolicy): void {
   }
 }
 
+export interface N8nConfig {
+  enabled: boolean;
+  webhookUrl: string;
+  apiKey?: string;
+}
+
+const N8N_KEY = 'orbis_n8n_config';
+export const DEFAULT_N8N_CONFIG: N8nConfig = {
+  enabled: true,
+  webhookUrl: 'https://siloneedsleep.app.n8n.cloud/webhook/orbis-bridge',
+  apiKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYzQxOWM3Yy01OWViLTQwYjItYTMxMC03MGVhOTlkMzY0N2IiLCJpc3MiOiJuOG4iLCJqdGkiOiJjZTNhYWE1ZS00ZTFjLTRjN2QtOWE5NC0zOTYzMzdkYzIwNzgiLCJpYXQiOjE3OTMxMTA5MTMsImF1ZCI6Im1jcC1zZXJ2ZXItYXBpIn0.NI-k02e1Z_4BSESEHSQ_Fs2hybySS1omt-Fr0rw7YW0',
+};
+
+export function getStoredN8nConfig(): N8nConfig {
+  try {
+    const raw = localStorage.getItem(N8N_KEY);
+    if (!raw) return DEFAULT_N8N_CONFIG;
+    return { ...DEFAULT_N8N_CONFIG, ...JSON.parse(raw) };
+  } catch {
+    return DEFAULT_N8N_CONFIG;
+  }
+}
+
+export function saveStoredN8nConfig(cfg: N8nConfig): void {
+  try {
+    localStorage.setItem(N8N_KEY, JSON.stringify(cfg));
+  } catch {
+    // ignore
+  }
+}
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  type: 'http' | 'sse' | 'stdio';
+  serverUrl?: string;
+  authToken?: string;
+  command?: string;
+  headers?: Record<string, string>;
+  enabled: boolean;
+  status?: 'connected' | 'disconnected' | 'testing' | 'error';
+  latencyMs?: number;
+  tools?: {
+    name: string;
+    description?: string;
+    inputSchema?: any;
+  }[];
+  errorMessage?: string;
+  lastChecked?: string;
+}
+
+const MCP_SERVERS_KEY = 'orbis_mcp_servers';
+export const DEFAULT_MCP_SERVERS: McpServerConfig[] = [
+  {
+    id: 'mcp-n8n',
+    name: 'n8n Cloud MCP Server',
+    type: 'http',
+    serverUrl: 'https://siloneedsleep.app.n8n.cloud/mcp-server/http',
+    authToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzYzQxOWM3Yy01OWViLTQwYjItYTMxMC03MGVhOTlkMzY0N2IiLCJpc3MiOiJuOG4iLCJqdGkiOiJjZTNhYWE1ZS00ZTFjLTRjN2QtOWE5NC0zOTYzMzdkYzIwNzgiLCJpYXQiOjE3OTMxMTA5MTMsImF1ZCI6Im1jcC1zZXJ2ZXItYXBpIn0.NI-k02e1Z_4BSESEHSQ_Fs2hybySS1omt-Fr0rw7YW0',
+    enabled: true,
+  }
+];
+
+export function getStoredMcpServers(): McpServerConfig[] {
+  try {
+    const raw = localStorage.getItem(MCP_SERVERS_KEY);
+    if (!raw) return DEFAULT_MCP_SERVERS;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_MCP_SERVERS;
+  } catch {
+    return DEFAULT_MCP_SERVERS;
+  }
+}
+
+export function saveStoredMcpServers(servers: McpServerConfig[]): void {
+  try {
+    localStorage.setItem(MCP_SERVERS_KEY, JSON.stringify(servers));
+    storeListeners.forEach((listener) => listener());
+  } catch {
+    // ignore
+  }
+}
+
 export interface ActionPayload {
-  tool: 'ClickButton' | 'MoveMouse' | 'SendKeystroke' | 'CaptureScreen' | 'ExecutePowerShell' | 'SandboxExec';
+  tool: 'ClickButton' | 'MoveMouse' | 'SendKeystroke' | 'CaptureScreen' | 'ExecutePowerShell' | 'SandboxExec' | 'N8nTrigger' | 'McpToolCall';
   params: Record<string, any>;
   result?: any;
   status: 'pending_approval' | 'running' | 'success' | 'error' | 'rejected';
@@ -421,11 +504,14 @@ Nhiệm vụ của bạn:
   { "type": "keyboard_type", "text": "Nội dung cần gõ", "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
 - Chạy lệnh trong Sandbox an toàn:
   { "type": "sandbox_exec", "command": "Lệnh thực thi", "requireCheckpoint": true, "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
+- Kích hoạt n8n Cloud Automation / Webhook (gửi email, cào web, thông báo Telegram, kết nối GitHub):
+  { "type": "n8n_execute", "workflow": "Tên tác vụ (vd: send_email, scrape_web, notify_telegram, sync_github)", "payload": { "key": "value" }, "thought": "Suy nghĩ phân tích...", "message": "Thông báo cho ${pronoun} ${userName}" }
 - Hoàn tất tác vụ / Trả lời người dùng:
   { "type": "done", "message": "Câu trả lời hoặc báo cáo hoàn tất cho ${pronoun} ${userName}", "thought": "Suy nghĩ phân tích..." }
 
 Quy tắc bảo mật & an toàn:
-- Nếu thao tác liên quan đến lệnh hệ thống nguy hiểm (xóa tệp, can thiệp registry, cài đặt phần mềm không rõ nguồn gốc), BẮT BUỘC thực thi trong Detonation Sandbox (type: "sandbox_exec").
+- Nếu thao tác liên quan đến lệnh hệ thống nguy hiểm (xóa tệp, can thiệp registry, cài đặt phần mềm không rõ nguồn gốc), BẮT BUỘC thực thi trong Sandbox (type: "sandbox_exec").
+- Nếu thao tác liên quan đến dịch vụ Cloud/Web (gửi mail, thông báo, trigger n8n), BẮT BUỘC sử dụng n8n Cloud (type: "n8n_execute").
 - Luôn giữ thái độ phục vụ tận tâm, ngắn gọn và chính xác.`;
 }
 

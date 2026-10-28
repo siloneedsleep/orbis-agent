@@ -1,11 +1,13 @@
 import { commands } from "@/ipc/commands";
-import { getStoredProfile, getStoredLLMConfig, buildSystemPrompt, LLMConfig } from "@/state/agentStore";
+import { getStoredProfile, getStoredLLMConfig, getStoredN8nConfig, getStoredMcpServers, buildSystemPrompt, LLMConfig } from "@/state/agentStore";
 
 export type AgentAction = 
   | { type: 'mouse_move', x: number, y: number }
   | { type: 'mouse_click', button: 'left' | 'right' }
   | { type: 'keyboard_type', text: string }
   | { type: 'sandbox_exec', command: string, requireCheckpoint?: boolean }
+  | { type: 'n8n_execute', workflow: string, payload?: Record<string, any>, summary?: string }
+  | { type: 'mcp_call', tool: string, arguments?: Record<string, any>, serverUrl?: string, summary?: string }
   | { type: 'done', message: string };
 
 export interface AgentStepResult {
@@ -124,6 +126,31 @@ export class AgentBrain {
           };
           break;
         }
+        case 'n8n_execute': {
+          const workflow = parsed.workflow || parsed.action || parsed.name || 'general_task';
+          action = {
+            type: 'n8n_execute',
+            workflow: String(workflow),
+            payload: typeof parsed.payload === 'object' && parsed.payload !== null ? parsed.payload : {},
+            summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
+          };
+          break;
+        }
+        case 'mcp_call': {
+          const tool = parsed.tool || parsed.toolName || parsed.name || 'default_tool';
+          action = {
+            type: 'mcp_call',
+            tool: String(tool),
+            arguments: typeof parsed.arguments === 'object' && parsed.arguments !== null
+              ? parsed.arguments
+              : typeof parsed.params === 'object' && parsed.params !== null
+              ? parsed.params
+              : {},
+            serverUrl: typeof parsed.serverUrl === 'string' ? parsed.serverUrl : undefined,
+            summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
+          };
+          break;
+        }
         case 'done': {
           const doneMsg =
             typeof parsed.message === 'string' && parsed.message.trim()
@@ -184,7 +211,7 @@ export class AgentBrain {
 
     const userInstruction =
       `Yêu cầu hiện tại của ${pronoun} ${userName}: "${userPrompt}"${modeSection}${historySection}\n` +
-      `Hãy trả về DUY NHẤT 1 JSON object hợp lệ có khóa "type" ("done" | "mouse_move" | "mouse_click" | "keyboard_type" | "sandbox_exec"), "thought" và "message".\n` +
+      `Hãy trả về DUY NHẤT 1 JSON object hợp lệ có khóa "type" ("done" | "mouse_move" | "mouse_click" | "keyboard_type" | "sandbox_exec" | "n8n_execute" | "mcp_call"), "thought" và "message".\n` +
       `Ví dụ phản hồi chuẩn: {"type": "done", "thought": "Đã phân tích yêu cầu của ${pronoun} ${userName}", "message": "Dạ chào ${pronoun} ${userName}! Em có thể hỗ trợ gì cho ${pronoun} ạ?"}`;
 
     let replyContent = "";
@@ -485,6 +512,36 @@ export class AgentBrain {
         return await commands.sendKeystroke(action.text);
       case 'sandbox_exec':
         return await commands.execInSandbox(action.command);
+      case 'n8n_execute': {
+        const n8nConfig = getStoredN8nConfig();
+        const webhookUrl = n8nConfig.webhookUrl || "https://siloneedsleep.app.n8n.cloud/webhook/orbis-bridge";
+        const authToken = n8nConfig.apiKey || undefined;
+        return await commands.triggerN8nWebhook({
+          webhookUrl,
+          action: action.workflow,
+          payload: {
+            workflow: action.workflow,
+            ...(action.payload || {}),
+            summary: action.summary,
+          },
+          authToken,
+        });
+      }
+      case 'mcp_call': {
+        const servers = getStoredMcpServers().filter(s => s.enabled);
+        const targetServer = action.serverUrl 
+          ? servers.find(s => s.serverUrl === action.serverUrl) || servers[0]
+          : servers[0];
+        
+        const serverUrl = targetServer?.serverUrl || action.serverUrl || "https://siloneedsleep.app.n8n.cloud/mcp-server/http";
+        const authToken = targetServer?.authToken || undefined;
+        return await commands.callMcpTool({
+          serverUrl,
+          toolName: action.tool,
+          arguments: action.arguments,
+          authToken,
+        });
+      }
       case 'done':
         return action.message;
     }

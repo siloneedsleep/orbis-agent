@@ -114,6 +114,41 @@ export const commands = {
       userPrompt: params.userPrompt,
       imageBase64: params.imageBase64 ?? null,
     }),
+  triggerN8nWebhook: (params: {
+    webhookUrl?: string;
+    action: string;
+    payload?: Record<string, any>;
+    authToken?: string;
+  }) =>
+    invoke<any>("trigger_n8n_webhook", {
+      webhookUrl: params.webhookUrl ?? null,
+      action: params.action,
+      payload: params.payload ?? null,
+      authToken: params.authToken ?? null,
+    }),
+  testMcpConnection: (params: {
+    serverUrl: string;
+    authToken?: string;
+    customHeaders?: Record<string, string>;
+  }) =>
+    invoke<McpTestResult>("test_mcp_connection", {
+      serverUrl: params.serverUrl,
+      authToken: params.authToken ?? null,
+      customHeaders: params.customHeaders ?? null,
+    }),
+  callMcpTool: (params: {
+    serverUrl: string;
+    toolName: string;
+    arguments?: Record<string, any>;
+    authToken?: string;
+  }) =>
+    invoke<any>("call_mcp_tool", {
+      serverUrl: params.serverUrl,
+      toolName: params.toolName,
+      arguments: params.arguments ?? null,
+      authToken: params.authToken ?? null,
+    }),
+  readSystemMcpConfig: () => invoke<McpSystemConfigResult>("read_system_mcp_config"),
   startSandboxVm: () => invoke<string>("start_sandbox_vm"),
   createSandboxCheckpoint: (snapshotName: string) => invoke<string>("create_sandbox_checkpoint", { snapshotName }),
   rollbackSandboxCheckpoint: (snapshotName: string) => invoke<string>("rollback_sandbox_checkpoint", { snapshotName }),
@@ -131,4 +166,31 @@ export interface PetInfo {
   breed: string;
   isAvailable: boolean;
   clipsCount: number;
+}
+
+export interface McpToolItem {
+  name: string;
+  description?: string;
+  inputSchema?: any;
+}
+
+export interface McpTestResult {
+  success: boolean;
+  latencyMs: number;
+  count: number;
+  tools: McpToolItem[];
+}
+
+export interface McpSystemConfigResult {
+  exists: boolean;
+  path: string;
+  servers: {
+    id: string;
+    name: string;
+    serverUrl?: string;
+    authToken?: string;
+    command?: string;
+    type: 'http' | 'stdio';
+    enabled: boolean;
+  }[];
 }

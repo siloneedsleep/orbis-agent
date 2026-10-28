@@ -18,7 +18,8 @@ import {
   RotateCcw,
   BookmarkPlus,
   ExternalLink,
-  Shield
+  Shield,
+  Plug
 } from "lucide-react";
 import { commands, OverlayLayout, SystemInfo } from "@/ipc/commands";
 import { events } from "@/ipc/events";
@@ -35,10 +36,13 @@ import {
   subscribeAgentStore,
   SandboxExecutionPolicy,
   getStoredSandboxPolicy,
-  saveStoredSandboxPolicy
+  saveStoredSandboxPolicy,
+  getStoredMcpServers,
+  getStoredN8nConfig
 } from "@/state/agentStore";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { SettingsModal } from "@/components/SettingsModal";
+import { UnifiedSettingsView } from "@/components/Settings/UnifiedSettingsView";
 import { WorkstreamCard } from "@/components/WorkstreamCard";
 import { TeachCatView } from "@/components/TeachCat/TeachCatView";
 import { AgentBrain, AgentAction } from "@/services/agentLoop";
@@ -123,8 +127,8 @@ export function DashboardApp() {
   const [showInspector, setShowInspector] = useState<boolean>(true);
   const [inspectorTab, setInspectorTab] = useState<'screen' | 'logs' | 'system'>('screen');
 
-  // Execution Mode: 'computer_use' (OS control) | 'sandbox' (Isolated Sandbox) | 'chat' | 'teach_cat'
-  const [mode, setMode] = useState<'computer_use' | 'sandbox' | 'chat' | 'teach_cat'>('computer_use');
+  // Execution Mode: 'computer_use' (OS control) | 'sandbox' (Isolated Sandbox) | 'chat' | 'teach_cat' | 'settings'
+  const [mode, setMode] = useState<'computer_use' | 'sandbox' | 'chat' | 'teach_cat' | 'settings'>('computer_use');
 
   // Sandbox Execution Policy ('request_review' | 'default' | 'auto' | 'turbo')
   const [sandboxPolicy, setSandboxPolicy] = useState<SandboxExecutionPolicy>(getStoredSandboxPolicy());
@@ -394,9 +398,8 @@ export function DashboardApp() {
         // Phase 2: Planning Move (Reasoning with Hybrid Fallback)
         setCurrentStage('planning');
         events.emitPetState({ state: 'thinking', message: 'Em đang suy nghĩ câu trả lời...' }).catch(() => {});
-        addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 2: Gọi mô hình LLM (${config?.provider || 'ollama'}: ${config?.model || 'auto'})...`);
-
-        const plan = await planStepWithHybridFallback(brain, text, screenData, mode, actionHistory);
+        const execMode = mode === 'settings' ? 'computer_use' : mode;
+        const plan = await planStepWithHybridFallback(brain, text, screenData, execMode, actionHistory);
         if (plan.usedFallback) {
           addLog(`[HybridFallback] Đã tự động chuyển sang phương án LLM dự phòng thành công.`);
         }
@@ -438,6 +441,8 @@ export function DashboardApp() {
         if (plan.action.type === 'mouse_click') toolName = 'ClickButton';
         if (plan.action.type === 'keyboard_type') toolName = 'SendKeystroke';
         if (plan.action.type === 'sandbox_exec') toolName = 'SandboxExec';
+        if (plan.action.type === 'n8n_execute') toolName = 'N8nTrigger';
+        if (plan.action.type === 'mcp_call') toolName = 'McpToolCall';
 
         const actionCardId = addItem({
           type: 'action',
@@ -682,9 +687,11 @@ export function DashboardApp() {
 
           <button
             type="button"
-            onClick={() => setShowSettings(true)}
-            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white transition"
-            title="Cài đặt hệ thống"
+            onClick={() => setMode(mode === 'settings' ? 'computer_use' : 'settings')}
+            className={`rounded-lg p-1.5 transition ${
+              mode === 'settings' ? "bg-zinc-800 text-cyan-400" : "text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            }`}
+            title="Cài đặt hệ thống & Connect MCP"
           >
             <SettingsIcon className="h-4 w-4" />
           </button>
@@ -729,6 +736,7 @@ export function DashboardApp() {
                 { id: 'sandbox', label: 'Truy cập Sandbox', icon: ShieldAlert, desc: 'Môi trường thực thi cô lập' },
                 { id: 'chat', label: 'Chat Assistant', icon: Bot, desc: 'Trò chuyện không can thiệp OS' },
                 { id: 'teach_cat', label: 'Huấn luyện Mèo', icon: GraduationCap, desc: 'Dạy kỹ năng & thói quen' },
+                { id: 'settings', label: 'Cài đặt hệ thống', icon: SettingsIcon, desc: 'Connect MCP, LLM, Bảo mật' },
               ].map((m) => {
                 const Icon = m.icon;
                 const active = mode === m.id;
@@ -827,6 +835,14 @@ export function DashboardApp() {
               </span>
             </div>
 
+            <div className="flex items-center justify-between text-zinc-400">
+              <span>Máy chủ MCP:</span>
+              <span className="font-mono text-emerald-400 flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {getStoredMcpServers().filter(s => s.enabled).length} Đang bật
+              </span>
+            </div>
+
             <button
               type="button"
               onClick={handleOpenSandbox}
@@ -841,7 +857,9 @@ export function DashboardApp() {
 
         {/* CENTER WORKSPACE */}
         <main className="flex flex-1 flex-col overflow-hidden bg-zinc-950">
-          {mode === 'teach_cat' ? (
+          {mode === 'settings' ? (
+            <UnifiedSettingsView isAdmin={sys?.isAdmin} onClose={() => setMode('computer_use')} />
+          ) : mode === 'teach_cat' ? (
             <TeachCatView onSettingsChange={(s) => setCatSettings(s)} />
           ) : (
             <>

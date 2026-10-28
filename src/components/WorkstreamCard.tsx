@@ -14,7 +14,9 @@ import {
   User,
   Bot,
   Check,
-  X
+  X,
+  Workflow,
+  Plug
 } from 'lucide-react';
 import { WorkstreamItem } from '@/state/agentStore';
 
@@ -102,6 +104,10 @@ export const WorkstreamCard: React.FC<WorkstreamCardProps> = ({ item, onConfirmA
           return <Terminal className="h-4 w-4 text-emerald-400" />;
         case 'SandboxExec':
           return <ShieldAlert className="h-4 w-4 text-cyan-400" />;
+        case 'N8nTrigger':
+          return <Workflow className="h-4 w-4 text-rose-400" />;
+        case 'McpToolCall':
+          return <Plug className="h-4 w-4 text-emerald-400" />;
         default:
           return <Terminal className="h-4 w-4 text-zinc-400" />;
       }
@@ -164,6 +170,25 @@ export const WorkstreamCard: React.FC<WorkstreamCardProps> = ({ item, onConfirmA
           <div className="rounded-lg bg-black/40 border border-zinc-800/80 p-2.5 font-mono text-[11px] text-zinc-300 overflow-x-auto">
             {tool === 'ExecutePowerShell' || tool === 'SandboxExec' ? (
               <div className="text-cyan-300 whitespace-pre-wrap">{params.command || JSON.stringify(params, null, 2)}</div>
+            ) : tool === 'N8nTrigger' ? (
+              <div className="space-y-1">
+                <div className="text-rose-400 font-semibold">Workflow: {params.workflow || params.action}</div>
+                {params.summary && <div className="text-zinc-400 italic font-sans">{params.summary}</div>}
+                {params.payload && Object.keys(params.payload).length > 0 && (
+                  <pre className="text-zinc-300 mt-1">{JSON.stringify(params.payload, null, 2)}</pre>
+                )}
+              </div>
+            ) : tool === 'McpToolCall' ? (
+              <div className="space-y-1">
+                <div className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                  <Plug className="h-3.5 w-3.5" />
+                  <span>MCP Tool: {params.tool || params.name}</span>
+                </div>
+                {params.summary && <div className="text-zinc-400 italic font-sans">{params.summary}</div>}
+                {params.arguments && Object.keys(params.arguments).length > 0 && (
+                  <pre className="text-zinc-300 mt-1">{JSON.stringify(params.arguments, null, 2)}</pre>
+                )}
+              </div>
             ) : (
               <pre>{JSON.stringify(params, null, 2)}</pre>
             )}
@@ -201,7 +226,9 @@ export const WorkstreamCard: React.FC<WorkstreamCardProps> = ({ item, onConfirmA
         {result && (
           <div className="text-[11px] text-zinc-400 pl-1">
             <span className="text-zinc-500 font-medium">Kết quả: </span>
-            <span className="text-zinc-300 font-mono whitespace-pre-wrap">{String(result)}</span>
+            <span className="text-zinc-300 font-mono whitespace-pre-wrap">
+              {typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result)}
+            </span>
           </div>
         )}
       </div>
