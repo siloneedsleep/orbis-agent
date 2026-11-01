@@ -8,7 +8,8 @@ import {
   addCatTreats,
   spendCatTreats,
   renameCat,
-  getStoredProfile 
+  getStoredProfile,
+  subscribeAgentStore
 } from '@/state/agentStore';
 import { AgentBrain } from '@/services/agentLoop';
 import { planStepWithHybridFallback } from '@/services/orchestrator';
@@ -16,7 +17,6 @@ import { redeemCode, RedeemResult } from '@/services/redeemService';
 import { 
   Heart, 
   Utensils, 
-  Droplets, 
   Moon, 
   Sun, 
   ExternalLink, 
@@ -27,9 +27,7 @@ import {
   MessageSquare,
   Gift,
   Edit3,
-  Lock,
-  Check,
-  Coins
+  Lock
 } from 'lucide-react';
 
 export type CatActionState = 
@@ -68,19 +66,19 @@ interface PoseBubbleItem {
   label: string;
   icon: string;
   clip: string;
-  speech: string;
+  speech: (pronoun: string) => string;
   actionState?: CatActionState;
 }
 
 const POSE_BUBBLES: PoseBubbleItem[] = [
-  { id: 'meditate', label: 'Thiền', icon: '🧘', clip: '34-idle-meditation-breath', speech: 'Em đang thiền tịnh tâm, nạp năng lượng... 🧘', actionState: 'thinking' },
-  { id: 'sit', label: 'Ngồi', icon: '🐾', clip: '08-idle-loaf-content', speech: 'Ngồi ngoan chờ anh giao việc đây! 🐾', actionState: 'idle' },
-  { id: 'lie', label: 'Nằm', icon: '🛌', clip: '03-idle-belly-up-bask', speech: 'Nằm phơi bụng sưởi ấm thích quá đi à~ 💖', actionState: 'idle' },
-  { id: 'sleep', label: 'Ngủ', icon: '💤', clip: '01-idle-curled-deep-sleep', speech: 'Khò khò... ngủ ngoan không quấy anh nhé 💤', actionState: 'sleep' },
-  { id: 'stretch', label: 'Giãn cơ', icon: '🤸', clip: '10-idle-stretch-yawn', speech: 'Oáp~ Vươn vai một cái thật sảng khoái! ⚡', actionState: 'done' },
-  { id: 'alert', label: 'Tỉnh táo', icon: '⚡', clip: '39-idle-stand-alert-paw-wave', speech: 'Sẵn sàng 100% công lực phục vụ anh! 🚀', actionState: 'wake' },
-  { id: 'feed', label: 'Ăn hạt', icon: '🐟', clip: '09-idle-sit-eat-bowl', speech: 'Măm măm... Cảm ơn anh đã cho em ăn! 🐟', actionState: 'feed' },
-  { id: 'drink', label: 'Uống nước', icon: '💧', clip: '37-idle-sit-drink-water-bowl', speech: 'Nước mát lành quá, anh cũng uống nước nhé! 💧', actionState: 'drink' },
+  { id: 'meditate', label: 'Thiền', icon: '🧘', clip: '34-idle-meditation-breath', speech: () => 'Em đang thiền tịnh tâm, nạp năng lượng... 🧘', actionState: 'thinking' },
+  { id: 'sit', label: 'Ngồi', icon: '🐾', clip: '08-idle-loaf-content', speech: (p) => `Ngồi ngoan chờ ${p} giao việc đây! 🐾`, actionState: 'idle' },
+  { id: 'lie', label: 'Nằm', icon: '🛌', clip: '03-idle-belly-up-bask', speech: () => 'Nằm phơi bụng sưởi ấm thích quá đi à~ 💖', actionState: 'idle' },
+  { id: 'sleep', label: 'Ngủ', icon: '💤', clip: '01-idle-curled-deep-sleep', speech: (p) => `Khò khò... ngủ ngoan không quấy ${p} nhé 💤`, actionState: 'sleep' },
+  { id: 'stretch', label: 'Giãn cơ', icon: '🤸', clip: '10-idle-stretch-yawn', speech: () => 'Oáp~ Vươn vai một cái thật sảng khoái! ⚡', actionState: 'done' },
+  { id: 'alert', label: 'Tỉnh táo', icon: '⚡', clip: '39-idle-stand-alert-paw-wave', speech: (p) => `Sẵn sàng 100% công lực phục vụ ${p}! 🚀`, actionState: 'wake' },
+  { id: 'feed', label: 'Ăn hạt', icon: '🐟', clip: '09-idle-sit-eat-bowl', speech: (p) => `Măm măm... Cảm ơn ${p} đã cho em ăn! 🐟`, actionState: 'feed' },
+  { id: 'drink', label: 'Uống nước', icon: '💧', clip: '37-idle-sit-drink-water-bowl', speech: (p) => `Nước mát lành quá, ${p} cũng uống nước nhé! 💧`, actionState: 'drink' },
 ];
 
 export const CyberCat: React.FC<CyberCatProps> = ({
@@ -90,8 +88,8 @@ export const CyberCat: React.FC<CyberCatProps> = ({
   onOpenTeach
 }) => {
   const [settings, setSettings] = useState<CatSettings>(getStoredCatSettings());
+  const [pronoun, setPronoun] = useState<string>(() => getStoredProfile()?.pronoun || 'anh');
   const [videoSrc, setVideoSrc] = useState<string>('');
-  const [currentClip, setCurrentClip] = useState<string>('05-idle-sphinx-blink');
   const [speechText, setSpeechText] = useState<string | null>(null);
 
   // Trạng thái các menu & popups
@@ -116,6 +114,8 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     startX: 0, startY: 0, origX: 0, origY: 0
   });
   const hasMovedRef = useRef<boolean>(false);
+  const settingsRef = useRef<CatSettings>(settings);
+  settingsRef.current = settings;
 
   const [hearts, setHearts] = useState<{ id: number; x: number; y: number }[]>([]);
 
@@ -127,11 +127,13 @@ export const CyberCat: React.FC<CyberCatProps> = ({
   const redeemInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
-  // Cập nhật settings từ storage
+  // Cập nhật settings & profile từ agentStore (cả cùng cửa sổ lẫn đa cửa sổ)
   useEffect(() => {
-    const handleStorage = () => setSettings(getStoredCatSettings());
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
+    const syncStore = () => {
+      setSettings(getStoredCatSettings());
+      setPronoun(getStoredProfile()?.pronoun || 'anh');
+    };
+    return subscribeAgentStore(syncStore);
   }, []);
 
   // Xử lý nạp video từ Rust Backend
@@ -149,26 +151,8 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     }
   };
 
-  // Đồng bộ trạng thái hành động
-  useEffect(() => {
-    const clips = STATE_CLIPS[actionState] || STATE_CLIPS.idle;
-    const chosen = clips[Math.floor(Math.random() * clips.length)];
-    setCurrentClip(chosen);
-    loadClip(chosen);
-
-    if (customMessage) {
-      triggerSpeech(customMessage, 5000);
-    } else if (actionState === 'thinking') {
-      triggerSpeech("Đang phân tích màn hình...", 4000);
-    } else if (actionState === 'executing') {
-      triggerSpeech("Em đang thực thi tác vụ...", 4000);
-    } else if (actionState === 'done') {
-      triggerSpeech("Đã xong việc rồi anh ơi! ✨", 5000);
-    }
-  }, [actionState, customMessage]);
-
   const triggerSpeech = (text: string, duration = 4000) => {
-    if (!settings.speechBubbleEnabled) return;
+    if (!settingsRef.current.speechBubbleEnabled) return;
     setSpeechText(text);
     if (speechTimerRef.current) clearTimeout(speechTimerRef.current);
     speechTimerRef.current = setTimeout(() => {
@@ -176,8 +160,27 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     }, duration);
   };
 
+  // Đồng bộ trạng thái hành động
+  useEffect(() => {
+    const clips = STATE_CLIPS[actionState] || STATE_CLIPS.idle;
+    const chosen = clips[Math.floor(Math.random() * clips.length)];
+    loadClip(chosen);
+
+    const p = getStoredProfile()?.pronoun || 'anh';
+    if (customMessage) {
+      triggerSpeech(customMessage, 5000);
+    } else if (actionState === 'thinking') {
+      triggerSpeech("Đang phân tích màn hình...", 4000);
+    } else if (actionState === 'executing') {
+      triggerSpeech("Em đang thực thi tác vụ...", 4000);
+    } else if (actionState === 'done') {
+      triggerSpeech(`Đã xong việc rồi ${p} ơi! ✨`, 5000);
+    }
+  }, [actionState, customMessage]);
+
   // Tự động focus input khi mở Mini Bubble Chat, Redeem Modal, Rename Modal
   useEffect(() => {
+    if (!settings.enabled) return;
     if (showMiniChat) {
       commands.setOverlayInteractive(true);
       setTimeout(() => miniChatInputRef.current?.focus(), 100);
@@ -191,7 +194,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
       setRenameInput(settings.name);
       setTimeout(() => renameInputRef.current?.focus(), 100);
     }
-  }, [showMiniChat, showRedeemModal, showRenameModal, settings.name]);
+  }, [settings.enabled, showMiniChat, showRedeemModal, showRenameModal, settings.name]);
 
   // Click 1 lần: Petting + Bật/tắt Pose Bubbles
   const handleSingleClick = (e?: React.MouseEvent) => {
@@ -209,18 +212,16 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     const newHeart = { id: Date.now(), x: Math.random() * 40 - 20, y: -20 };
     setHearts(prev => [...prev.slice(-4), newHeart]);
 
-    const profile = getStoredProfile();
-    const pronoun = profile?.pronoun || 'anh';
+    const p = getStoredProfile()?.pronoun || pronoun || 'anh';
     const greetings = [
-      `Meow~ ${pronoun} vuốt lông em thích quá! 💖`,
-      `Em đang túc trực sẵn sàng rồi ${pronoun} ơi! ✨`,
-      `Meo meo~ Chúc ${pronoun} một ngày làm việc năng suất! 🚀`,
+      `Meow~ ${p} vuốt lông em thích quá! 💖`,
+      `Em đang túc trực sẵn sàng rồi ${p} ơi! ✨`,
+      `Meo meo~ Chúc ${p} một ngày làm việc năng suất! 🚀`,
       `Purrr... Nhấn 2 lần vào em để mở Mini Chat nhé!`
     ];
     triggerSpeech(greetings[Math.floor(Math.random() * greetings.length)], 3500);
 
     const happyClip = Math.random() > 0.5 ? '39-idle-stand-alert-paw-wave' : '38-tr-drink-to-sit-water-bowl-meow';
-    setCurrentClip(happyClip);
     loadClip(happyClip);
   };
 
@@ -261,8 +262,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
   // Chọn tư thế từ Pose Bubbles
   const handleSelectPose = (pose: PoseBubbleItem) => {
     loadClip(pose.clip);
-    setCurrentClip(pose.clip);
-    triggerSpeech(pose.speech, 4000);
+    triggerSpeech(pose.speech(pronoun), 4000);
     const updated = addCatExp(5);
     setSettings(updated);
 
@@ -282,18 +282,22 @@ export const CyberCat: React.FC<CyberCatProps> = ({
 
     // Chuyển tư thế suy nghĩ (thiền)
     const thinkClip = '34-idle-meditation-breath';
-    setCurrentClip(thinkClip);
     loadClip(thinkClip);
     triggerSpeech(`Đang suy luận: "${text}"...`, 6000);
 
     try {
-      // 1. Chụp màn hình để AI có ngữ cảnh
+      // 1. Chụp màn hình để AI có ngữ cảnh (cộng tọa độ gốc virtual desktop cho đa màn hình)
       let screenData: string | undefined = undefined;
       try {
         const layout = await commands.getOverlayLayout();
         if (layout && layout.monitors.length > 0) {
           const p = layout.monitors.find(m => m.primary) || layout.monitors[0];
-          screenData = await commands.captureScreenRegion(p.x, p.y, p.width, p.height);
+          screenData = await commands.captureScreenRegion(
+            layout.originX + p.x,
+            layout.originY + p.y,
+            p.width,
+            p.height
+          );
         }
       } catch (capErr) {
         console.warn("MiniChat screen capture error:", capErr);
@@ -306,7 +310,6 @@ export const CyberCat: React.FC<CyberCatProps> = ({
       // 3. Thực thi hành động nếu cần thao tác máy tính
       if (plan.action && plan.action.type !== 'done') {
         const execClip = '11-idle-crouch-wiggle';
-        setCurrentClip(execClip);
         loadClip(execClip);
         triggerSpeech(`Đang thực hiện: ${plan.action.type}...`, 3000);
         await brain.executeAction(plan.action);
@@ -314,12 +317,11 @@ export const CyberCat: React.FC<CyberCatProps> = ({
 
       // 4. Báo cáo hoàn tất + thưởng 10 Treats và 15 EXP
       const doneClip = '39-idle-stand-alert-paw-wave';
-      setCurrentClip(doneClip);
       loadClip(doneClip);
       const reply = plan.message || plan.thought || "Tác vụ đã hoàn tất!";
       triggerSpeech(reply, 8000);
 
-      const withExp = addCatExp(15);
+      addCatExp(15);
       const withTreats = addCatTreats(10);
       setSettings(withTreats);
     } catch (err: any) {
@@ -334,8 +336,9 @@ export const CyberCat: React.FC<CyberCatProps> = ({
   const handleFeedTreat = () => {
     setShowMenu(false);
     const result = spendCatTreats(5);
+    const capPronoun = pronoun.charAt(0).toUpperCase() + pronoun.slice(1);
     if (!result.success) {
-      triggerSpeech("Anh ơi em hết bánh thưởng rồi! Nhập Redeem Code để nhận thêm Treats nhé! 🐟", 4500);
+      triggerSpeech(`${capPronoun} ơi em hết bánh thưởng rồi! Nhập Redeem Code để nhận thêm Treats nhé! 🐟`, 4500);
       return;
     }
     setSettings(result.settings);
@@ -343,14 +346,6 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     setSettings(updated);
     triggerSpeech("Măm măm... Bánh thưởng thơm ngon quá! 🐟 (+15 EXP)", 4500);
     loadClip('09-idle-sit-eat-bowl');
-  };
-
-  const handleDrink = () => {
-    setShowMenu(false);
-    triggerSpeech("Nước mát quá, anh cũng nhớ uống nước nhé! 💧", 4500);
-    loadClip('37-idle-sit-drink-water-bowl');
-    const updated = addCatExp(5);
-    setSettings(updated);
   };
 
   const handleSleep = () => {
@@ -373,7 +368,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
       setSettings(res.settings);
       setRenameMsg(null);
       setShowRenameModal(false);
-      triggerSpeech(`Từ giờ hãy gọi em là ${res.settings.name} nha anh! Meow~ 💖`, 4500);
+      triggerSpeech(`Từ giờ hãy gọi em là ${res.settings.name} nha ${pronoun}! Meow~ 💖`, 4500);
     } else {
       setRenameMsg(res.message);
     }
@@ -424,7 +419,11 @@ export const CyberCat: React.FC<CyberCatProps> = ({
         // Cho phép đặt tự do khắp màn hình
         const newX = Math.max(-50, Math.min(window.innerWidth - 80, dragStartRef.current.origX + dx));
         const newY = Math.max(0, Math.min(window.innerHeight - 80, dragStartRef.current.origY + dy));
-        setSettings(prev => ({ ...prev, position: { x: newX, y: newY } }));
+        setSettings(prev => {
+          const next = { ...prev, position: { x: newX, y: newY } };
+          settingsRef.current = next;
+          return next;
+        });
       }
     };
 
@@ -433,7 +432,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
       isPointerDownRef.current = false;
       if (hasMovedRef.current) {
         setIsDragging(false);
-        saveStoredCatSettings(settings);
+        saveStoredCatSettings(settingsRef.current);
       }
     };
 
@@ -443,7 +442,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [settings]);
+  }, []);
 
   // Bộ lọc màu Cyber
   const getColorFilter = () => {
@@ -462,16 +461,14 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     }
   };
 
-  if (!settings.enabled) return null;
-
   const isAnyModalOpen = showMenu || showPoseBubbles || showMiniChat || showRedeemModal || showRenameModal;
 
-  // Tự động giải phóng quyền chuột khi không mở bất kỳ popup nào, chống treo click trên màn hình
+  // Tự động giải phóng quyền chuột khi ẩn mèo hoặc khi không mở bất kỳ popup nào, chống treo click trên màn hình
   useEffect(() => {
-    if (!isAnyModalOpen && !isDragging) {
+    if (!settings.enabled || (!isAnyModalOpen && !isDragging)) {
       commands.setOverlayInteractive(false).catch(() => {});
     }
-  }, [isAnyModalOpen, isDragging]);
+  }, [settings.enabled, isAnyModalOpen, isDragging]);
 
   // Phím Escape đóng tất cả modal và trả quyền điều khiển về hệ điều hành
   useEffect(() => {
@@ -488,6 +485,8 @@ export const CyberCat: React.FC<CyberCatProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  if (!settings.enabled) return null;
 
   return (
     <div 
@@ -607,7 +606,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
       {/* 5. Mini Bubble Chat Capsule (Bấm 2 lần vào mèo) */}
       {showMiniChat && (
         <div 
-          className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-84 md:w-96 rounded-2xl border border-cyan-500/40 bg-zinc-950/92 p-3 shadow-[0_0_35px_rgba(0,240,255,0.3)] backdrop-blur-xl text-zinc-100 z-50 animate-in fade-in zoom-in-95 duration-200"
+          className="absolute top-full left-1/2 -translate-x-1/2 mt-1 w-80 sm:w-96 rounded-2xl border border-cyan-500/40 bg-zinc-950/95 p-3 shadow-[0_0_35px_rgba(0,240,255,0.3)] backdrop-blur-xl text-zinc-100 z-50 animate-in fade-in zoom-in-95 duration-200"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -821,7 +820,7 @@ export const CyberCat: React.FC<CyberCatProps> = ({
                   setShowRenameModal(true);
                   commands.setOverlayInteractive(true);
                 } else {
-                  triggerSpeech(`Cần đạt Thân thiết Lv.10 để đổi tên cho em nha anh! (Hiện tại: Lv.${settings.bondLevel}/10)`, 4500);
+                  triggerSpeech(`Cần đạt Thân thiết Lv.10 để đổi tên cho em nha ${pronoun}! (Hiện tại: Lv.${settings.bondLevel}/10)`, 4500);
                   setShowMenu(false);
                 }
               }}

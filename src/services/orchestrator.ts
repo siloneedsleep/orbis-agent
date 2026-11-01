@@ -9,18 +9,21 @@ function resolveCloudFallbackConfig(current: LLMConfig | null): LLMConfig | null
     defaultModel: string;
   }> = [
     { provider: 'deepseek', defaultModel: 'deepseek-chat' },
-    { provider: 'gemini', defaultModel: 'gemini-2.0-flash' },
+    { provider: 'gemini', defaultModel: 'gemini-2.5-flash' },
     { provider: 'openai', defaultModel: 'gpt-4o-mini' },
     { provider: 'claude', defaultModel: 'claude-3-5-sonnet-20241022' },
   ];
 
   if (current?.cloudProvider && current?.apiKey?.trim()) {
+    const providerDefault =
+      candidates.find((c) => c.provider === current.cloudProvider)?.defaultModel || 'deepseek-chat';
     return {
       ...current,
       type: 'api',
       mode: 'cloud',
       provider: current.cloudProvider,
-      model: current.cloudModel || 'deepseek-chat',
+      model: current.cloudModel || providerDefault,
+      cloudModel: current.cloudModel || providerDefault,
       apiKey: current.apiKey.trim(),
     };
   }
@@ -30,13 +33,15 @@ function resolveCloudFallbackConfig(current: LLMConfig | null): LLMConfig | null
       (current?.cloudProvider === c.provider ? current?.apiKey : undefined) ||
       (typeof window !== 'undefined' ? localStorage.getItem(`orbis_${c.provider}_key`) : null);
     if (storedKey && storedKey.trim()) {
+      const resolvedModel =
+        (current?.cloudProvider === c.provider ? current?.cloudModel : undefined) || c.defaultModel;
       return {
         type: 'api',
         mode: 'cloud',
         provider: c.provider,
         cloudProvider: c.provider,
-        model: current?.cloudModel || c.defaultModel,
-        cloudModel: current?.cloudModel || c.defaultModel,
+        model: resolvedModel,
+        cloudModel: resolvedModel,
         localModel: current?.localModel || 'auto',
         apiKey: storedKey.trim(),
         maxPower: current?.maxPower ?? true,
@@ -126,8 +131,8 @@ export class OrbisOrchestrator {
           const primary = layout.monitors.find((m) => m.primary) || layout.monitors[0];
           if (primary) {
             screenContext = await commands.captureScreenRegion(
-              primary.x,
-              primary.y,
+              layout.originX + primary.x,
+              layout.originY + primary.y,
               primary.width,
               primary.height
             );

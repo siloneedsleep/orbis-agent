@@ -1,6 +1,6 @@
 [package]
 name = "orbis-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Orbis Agent - The Spatial Desktop Agent"
 edition = "2021"
 

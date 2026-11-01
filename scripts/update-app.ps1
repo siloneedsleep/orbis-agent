@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Orbis Agent - Tool tự động cập nhật bản mới nhất từ GitHub
 .DESCRIPTION
@@ -42,6 +42,7 @@ $currentDir = (Get-Location).Path
 if (Test-Path (Join-Path $currentDir "package.json")) { $candidates += $currentDir }
 
 $commonPaths = @(
+    "E:\Users\truon\OneDrive\Desktop\orbis-agent-main",
     "C:\Users\truon\OneDrive\Desktop\orbis-agent-main",
     "$HOME\OneDrive\Desktop\orbis-agent-main",
     "$HOME\Desktop\orbis-agent-main",
@@ -78,7 +79,7 @@ Write-Host "Thu muc ung dung: $targetAppDir" -ForegroundColor Green
 # 2. Dong cac tien trinh Orbis Agent dang chay
 Write-Host "Kiem tra va dong tien trinh Orbis cu..." -ForegroundColor Gray
 $runningProcesses = Get-Process | Where-Object { 
-    $_.ProcessName -like "*orbis*" -or $_.ProcessName -like "*tauri*" 
+    $_.ProcessName -eq "orbis-agent" -or $_.ProcessName -like "orbis*" 
 }
 foreach ($proc in $runningProcesses) {
     try {
@@ -148,28 +149,45 @@ if (-not $updateSuccess) {
     }
 }
 
-# 4. Bien dich lai Frontend
-Write-Host "Bien dich lai Frontend (npm run build)..." -ForegroundColor Cyan
+# 4. Bien dich lai Frontend & Tauri Binary (neu co Cargo)
+Write-Host "Bien dich lai ung dung..." -ForegroundColor Cyan
 try {
     Push-Location $targetAppDir
-    cmd.exe /c "npm run build"
+    if (Get-Command cargo -ErrorAction SilentlyContinue) {
+        cmd.exe /c "npx tauri build --no-bundle"
+        $builtExe = Join-Path $targetAppDir "src-tauri\target\release\orbis-agent.exe"
+        if (Test-Path $builtExe) {
+            $localDeployDir = Join-Path $env:LOCALAPPDATA "Orbis Agent"
+            if (Test-Path $localDeployDir) {
+                Copy-Item $builtExe -Destination (Join-Path $localDeployDir "orbis-agent.exe") -Force
+            }
+        }
+    } else {
+        cmd.exe /c "npm run build"
+    }
     Pop-Location
-    Write-Host "   -> Build Frontend hoan tat!" -ForegroundColor Green
+    Write-Host "   -> Build hoan tat!" -ForegroundColor Green
 } catch {
-    Write-Host "   Build frontend co thong bao: $_" -ForegroundColor Yellow
+    Pop-Location -ErrorAction SilentlyContinue
+    Write-Host "   Build co thong bao: $_" -ForegroundColor Yellow
 }
 
 # 5. Thong bao hoan tat
 Write-Host "`n============================================================" -ForegroundColor Green
 Write-Host " DA CAP NHAT ORBIS AGENT LEN BAN MOI NHAT THANH CONG!" -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Green
-Write-Host "Moi tinh nang (Mini Bubble Chat, Pose Bubbles, Treat, Redeem) da duoc dong bo.`n" -ForegroundColor White
+Write-Host "Moi tinh nang (Connect MCP, n8n, Mini Bubble Chat, Pose Bubbles, Sandbox) da duoc dong bo.`n" -ForegroundColor White
 
-# 6. Tu dong xoa script updater ("xong r tu xoa luon")
+# 6. Chi tu dong xoa script updater khi chay doc lap ngoai git repository
 if (-not $KeepScript) {
     if ($MyInvocation.MyCommand.Path -and (Test-Path $MyInvocation.MyCommand.Path)) {
         $selfScriptPath = $MyInvocation.MyCommand.Path
-        Write-Host "Dang don dep va tu dong xoa file updater..." -ForegroundColor Gray
-        Start-Process cmd.exe -ArgumentList "/c ping 127.0.0.1 -n 2 >nul & del /f /q `"$selfScriptPath`"" -WindowStyle Hidden
+        $scriptParent = Split-Path -Parent $selfScriptPath
+        $repoCandidate = Split-Path -Parent $scriptParent
+        $isInsideGitRepo = (Test-Path (Join-Path $scriptParent ".git")) -or ($repoCandidate -and (Test-Path (Join-Path $repoCandidate ".git")))
+        if (-not $isInsideGitRepo) {
+            Write-Host "Dang don dep va tu dong xoa file updater..." -ForegroundColor Gray
+            Start-Process cmd.exe -ArgumentList "/c ping 127.0.0.1 -n 2 >nul & del /f /q `"$selfScriptPath`"" -WindowStyle Hidden
+        }
     }
 }

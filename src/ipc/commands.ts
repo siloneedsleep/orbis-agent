@@ -66,7 +66,7 @@ export const commands = {
   moveMouseBezier: (x: number, y: number) => invoke<void>("move_mouse_bezier", { x, y }),
   moveMouseNormalized: (normX: number, normY: number, monitorName?: string) =>
     invoke<void>("move_mouse_normalized", { normX, normY, monitorName: monitorName ?? null }),
-  mouseClick: (button: 'left' | 'right') => invoke<void>("mouse_click", { button }),
+  mouseClick: (button: 'left' | 'right' | 'middle' | 'double') => invoke<void>("mouse_click", { button }),
   sendKeystroke: (text: string) => invoke<void>("send_keystroke", { text }),
   setupPanicHook: () => invoke<void>("setup_panic_hook"),
   captureScreenRegion: (x: number, y: number, width: number, height: number) => 
@@ -141,12 +141,14 @@ export const commands = {
     toolName: string;
     arguments?: Record<string, any>;
     authToken?: string;
+    customHeaders?: Record<string, string>;
   }) =>
     invoke<any>("call_mcp_tool", {
       serverUrl: params.serverUrl,
       toolName: params.toolName,
       arguments: params.arguments ?? null,
       authToken: params.authToken ?? null,
+      customHeaders: params.customHeaders ?? null,
     }),
   readSystemMcpConfig: () => invoke<McpSystemConfigResult>("read_system_mcp_config"),
   startSandboxVm: () => invoke<string>("start_sandbox_vm"),
@@ -189,6 +191,7 @@ export interface McpSystemConfigResult {
     name: string;
     serverUrl?: string;
     authToken?: string;
+    headers?: Record<string, string>;
     command?: string;
     type: 'http' | 'stdio';
     enabled: boolean;

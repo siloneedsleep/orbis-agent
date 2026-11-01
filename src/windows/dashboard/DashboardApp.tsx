@@ -120,6 +120,7 @@ export function DashboardApp() {
   const [profile, setProfile] = useState<UserProfile | null>(getStoredProfile());
   const [config, setConfig] = useState<LLMConfig | null>(getStoredLLMConfig());
   const [catSettings, setCatSettings] = useState<CatSettings>(getStoredCatSettings());
+  const [mcpServersCount, setMcpServersCount] = useState<number>(() => getStoredMcpServers().filter(s => s.enabled).length);
   const [showOnboarding, setShowOnboarding] = useState<boolean>(!getStoredProfile() || !getStoredLLMConfig());
   const [showSettings, setShowSettings] = useState<boolean>(false);
 
@@ -171,6 +172,7 @@ export function DashboardApp() {
       setConfig(getStoredLLMConfig());
       setCatSettings(getStoredCatSettings());
       setSandboxPolicy(getStoredSandboxPolicy());
+      setMcpServersCount(getStoredMcpServers().filter(s => s.enabled).length);
     });
     return unsubscribe;
   }, []);
@@ -396,9 +398,16 @@ export function DashboardApp() {
           events.emitPetState({ state: 'thinking', message: 'Em đang quan sát màn hình...' }).catch(() => {});
           addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 1: Phân tích màn hình...`);
           try {
-            if (layout && layout.monitors.length > 0) {
-              const p = layout.monitors.find(m => m.primary) || layout.monitors[0];
-              screenData = await commands.captureScreenRegion(p.x, p.y, p.width, p.height);
+            const activeLayout = layout || await commands.getOverlayLayout();
+            if (!layout && activeLayout) setLayout(activeLayout);
+            if (activeLayout && activeLayout.monitors.length > 0) {
+              const p = activeLayout.monitors.find(m => m.primary) || activeLayout.monitors[0];
+              screenData = await commands.captureScreenRegion(
+                activeLayout.originX + p.x,
+                activeLayout.originY + p.y,
+                p.width,
+                p.height
+              );
               setLastScreenshot(screenData);
             }
           } catch (captureErr) {
@@ -466,8 +475,10 @@ export function DashboardApp() {
         });
 
         if (needsApproval) {
+          const rawPronoun = profile?.pronoun || 'anh';
+          const capPronoun = rawPronoun.charAt(0).toUpperCase() + rawPronoun.slice(1);
           addLog(`[Policy: ${activePolicy}] Đang chờ người dùng phê duyệt hành động [${plan.action.type}]...`);
-          events.emitPetState({ state: 'wake', message: 'Anh ơi, duyệt lệnh giúp em nhé!' }).catch(() => {});
+          events.emitPetState({ state: 'wake', message: `${capPronoun} ơi, duyệt lệnh giúp em nhé!` }).catch(() => {});
 
           const approved = await new Promise<boolean>((resolve) => {
             pendingApprovalResolvers.current.set(actionCardId, resolve);
@@ -513,7 +524,28 @@ export function DashboardApp() {
         events.emitPetState({ state: 'executing', message: `Em đang thực hiện ${plan.action.type}...` }).catch(() => {});
 
         const startT = Date.now();
-        const execResult = await brain.executeAction(plan.action);
+        let execResult: any;
+        try {
+          execResult = await brain.executeAction(plan.action);
+        } catch (actionErr: any) {
+          const duration = Date.now() - startT;
+          const actionErrMsg = actionErr?.message || String(actionErr);
+          setWorkstream(prev => prev.map(it => {
+            if (it.id === actionCardId && it.actionData) {
+              return {
+                ...it,
+                actionData: {
+                  ...it.actionData,
+                  status: 'error',
+                  result: actionErrMsg,
+                  durationMs: duration,
+                }
+              };
+            }
+            return it;
+          }));
+          throw actionErr;
+        }
         const duration = Date.now() - startT;
         actionHistory.push(`${plan.action.type}: ${JSON.stringify(plan.action)} -> ${String(execResult).slice(0, 200)}`);
 
@@ -556,9 +588,16 @@ export function DashboardApp() {
   // Chụp ảnh thủ công
   const handleManualCapture = async () => {
     try {
-      if (layout && layout.monitors.length > 0) {
-        const p = layout.monitors.find(m => m.primary) || layout.monitors[0];
-        const screen = await commands.captureScreenRegion(p.x, p.y, p.width, p.height);
+      const activeLayout = layout || await commands.getOverlayLayout();
+      if (!layout && activeLayout) setLayout(activeLayout);
+      if (activeLayout && activeLayout.monitors.length > 0) {
+        const p = activeLayout.monitors.find(m => m.primary) || activeLayout.monitors[0];
+        const screen = await commands.captureScreenRegion(
+          activeLayout.originX + p.x,
+          activeLayout.originY + p.y,
+          p.width,
+          p.height
+        );
         setLastScreenshot(screen);
         addLog("Đã chụp màn hình thủ công.");
         setInspectorTab('screen');
@@ -591,6 +630,7 @@ export function DashboardApp() {
           onClose={() => setShowSettings(false)}
           profile={profile}
           config={config}
+          isAdmin={sys?.isAdmin}
           onUpdate={(p, c) => {
             setProfile(p);
             setConfig(c);
@@ -850,7 +890,7 @@ export function DashboardApp() {
               <span>Máy chủ MCP:</span>
               <span className="font-mono text-emerald-400 flex items-center gap-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                {getStoredMcpServers().filter(s => s.enabled).length} Đang bật
+                {mcpServersCount} Đang bật
               </span>
             </div>
 

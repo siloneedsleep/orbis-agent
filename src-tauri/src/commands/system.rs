@@ -175,6 +175,134 @@ fn parse_mcp_response(text: &str) -> Result<Value, String> {
     Err(format!("Không thể phân tích dữ liệu trả về từ MCP Server: {}", trimmed))
 }
 
+async fn send_mcp_jsonrpc(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+    custom_headers: Option<&Value>,
+    session_id: Option<&str>,
+    body: &Value,
+) -> Result<(reqwest::StatusCode, Option<String>, String), String> {
+    let mut req = client
+        .post(url)
+        .header("Accept", "application/json, text/event-stream")
+        .header("Content-Type", "application/json");
+
+    if let Some(tok) = token {
+        let auth_val = if tok.starts_with("Bearer ") {
+            tok.to_string()
+        } else {
+            format!("Bearer {}", tok.trim())
+        };
+        req = req.header("Authorization", auth_val);
+    }
+
+    if let Some(sid) = session_id {
+        req = req.header("mcp-session-id", sid);
+    }
+
+    if let Some(Value::Object(map)) = custom_headers {
+        for (k, v) in map {
+            if let Some(s) = v.as_str() {
+                req = req.header(k, s);
+            }
+        }
+    }
+
+    let resp = req
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("Không thể kết nối đến MCP Server ({}): {}", url, e))?;
+
+    let status = resp.status();
+    let returned_sid = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+
+    Ok((status, returned_sid, text))
+}
+
+async fn execute_mcp_with_handshake_fallback(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+    custom_headers: Option<&Value>,
+    rpc_body: &Value,
+) -> Result<Value, String> {
+    let (status, _sid, text) =
+        send_mcp_jsonrpc(client, url, token, custom_headers, None, rpc_body).await?;
+
+    if status.is_success() {
+        if let Ok(parsed) = parse_mcp_response(&text) {
+            return Ok(parsed);
+        }
+    }
+
+    // Nếu MCP Server yêu cầu phiên khởi tạo (initialize + mcp-session-id theo chuẩn Streamable HTTP)
+    if status.as_u16() == 400
+        || text.to_lowercase().contains("session")
+        || text.to_lowercase().contains("initializ")
+    {
+        let init_body = json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "orbis-agent",
+                    "version": "0.2.0"
+                }
+            }
+        });
+
+        let (init_status, session_id, _init_text) =
+            send_mcp_jsonrpc(client, url, token, custom_headers, None, &init_body).await?;
+
+        if init_status.is_success() {
+            let notif_body = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+            let _ = send_mcp_jsonrpc(
+                client,
+                url,
+                token,
+                custom_headers,
+                session_id.as_deref(),
+                &notif_body,
+            )
+            .await;
+
+            let (retry_status, _, retry_text) = send_mcp_jsonrpc(
+                client,
+                url,
+                token,
+                custom_headers,
+                session_id.as_deref(),
+                rpc_body,
+            )
+            .await?;
+
+            if !retry_status.is_success() {
+                return Err(format!("MCP Server trả về HTTP {}: {}", retry_status, retry_text));
+            }
+            return parse_mcp_response(&retry_text);
+        }
+    }
+
+    if !status.is_success() {
+        return Err(format!("MCP Server trả về HTTP {}: {}", status, text));
+    }
+
+    parse_mcp_response(&text)
+}
+
 #[tauri::command]
 pub async fn test_mcp_connection(
     server_url: String,
@@ -191,27 +319,7 @@ pub async fn test_mcp_connection(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut req = client.post(url)
-        .header("Accept", "application/json, text/event-stream")
-        .header("Content-Type", "application/json");
-
-    if let Some(token) = resolve_mcp_auth_token(url, auth_token) {
-        let auth_val = if token.starts_with("Bearer ") {
-            token
-        } else {
-            format!("Bearer {}", token.trim())
-        };
-        req = req.header("Authorization", auth_val);
-    }
-
-    if let Some(Value::Object(map)) = custom_headers {
-        for (k, v) in map {
-            if let Some(s) = v.as_str() {
-                req = req.header(k, s);
-            }
-        }
-    }
-
+    let token = resolve_mcp_auth_token(url, auth_token);
     let body = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -220,19 +328,18 @@ pub async fn test_mcp_connection(
     });
 
     let start = std::time::Instant::now();
-    let resp = req.json(&body).send().await
-        .map_err(|e| format!("Không thể kết nối đến MCP Server ({}): {}", url, e))?;
-
+    let parsed = execute_mcp_with_handshake_fallback(
+        &client,
+        url,
+        token.as_deref(),
+        custom_headers.as_ref(),
+        &body,
+    )
+    .await?;
     let latency_ms = start.elapsed().as_millis();
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| e.to_string())?;
 
-    if !status.is_success() {
-        return Err(format!("MCP Server trả về HTTP {}: {}", status, text));
-    }
-
-    let parsed = parse_mcp_response(&text)?;
-    let tools = parsed.get("result")
+    let tools = parsed
+        .get("result")
         .and_then(|r| r.get("tools"))
         .cloned()
         .unwrap_or_else(|| json!([]));
@@ -253,6 +360,7 @@ pub async fn call_mcp_tool(
     tool_name: String,
     arguments: Option<Value>,
     auth_token: Option<String>,
+    custom_headers: Option<Value>,
 ) -> Result<Value, String> {
     let url = server_url.trim();
     if url.is_empty() {
@@ -264,19 +372,7 @@ pub async fn call_mcp_tool(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut req = client.post(url)
-        .header("Accept", "application/json, text/event-stream")
-        .header("Content-Type", "application/json");
-
-    if let Some(token) = resolve_mcp_auth_token(url, auth_token) {
-        let auth_val = if token.starts_with("Bearer ") {
-            token
-        } else {
-            format!("Bearer {}", token.trim())
-        };
-        req = req.header("Authorization", auth_val);
-    }
-
+    let token = resolve_mcp_auth_token(url, auth_token);
     let body = json!({
         "jsonrpc": "2.0",
         "id": 2,
@@ -287,19 +383,17 @@ pub async fn call_mcp_tool(
         }
     });
 
-    let resp = req.json(&body).send().await
-        .map_err(|e| format!("Không thể gọi tool MCP ({}): {}", tool_name, e))?;
+    let parsed = execute_mcp_with_handshake_fallback(
+        &client,
+        url,
+        token.as_deref(),
+        custom_headers.as_ref(),
+        &body,
+    )
+    .await
+    .map_err(|e| format!("Không thể gọi tool MCP ({}): {}", tool_name, e))?;
 
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-
-    if !status.is_success() {
-        return Err(format!("MCP Tool trả về HTTP {}: {}", status, text));
-    }
-
-    let parsed = parse_mcp_response(&text)?;
     let result = parsed.get("result").cloned().unwrap_or(parsed);
-
     Ok(result)
 }
 
@@ -332,13 +426,23 @@ pub async fn read_system_mcp_config() -> Result<Value, String> {
     if let Some(mcp_servers) = parsed.get("mcpServers").and_then(|s| s.as_object()) {
         for (name, cfg) in mcp_servers {
             let server_url = cfg.get("serverUrl").and_then(|u| u.as_str()).unwrap_or("").to_string();
-            let auth_header = cfg.get("headers")
-                .and_then(|h| h.get("Authorization"))
+            let headers_obj = cfg.get("headers").and_then(|h| h.as_object());
+            let auth_header = headers_obj
+                .and_then(|h| h.get("Authorization").or_else(|| h.get("authorization")))
                 .and_then(|a| a.as_str())
                 .unwrap_or("")
                 .replace("Bearer ", "")
                 .trim()
                 .to_string();
+
+            let mut extra_headers = serde_json::Map::new();
+            if let Some(h_map) = headers_obj {
+                for (hk, hv) in h_map {
+                    if !hk.eq_ignore_ascii_case("authorization") {
+                        extra_headers.insert(hk.clone(), hv.clone());
+                    }
+                }
+            }
 
             let command = cfg.get("command").and_then(|c| c.as_str()).unwrap_or("").to_string();
 
@@ -347,6 +451,7 @@ pub async fn read_system_mcp_config() -> Result<Value, String> {
                 "name": name,
                 "serverUrl": server_url,
                 "authToken": auth_header,
+                "headers": Value::Object(extra_headers),
                 "command": command,
                 "type": if !server_url.is_empty() { "http" } else { "stdio" },
                 "enabled": true

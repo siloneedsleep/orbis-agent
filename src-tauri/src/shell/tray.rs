@@ -21,7 +21,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 let _ = app.emit(EVENT_WAKE, ());
             }
             "dashboard" => {
-                let _ = super::dashboard::show(app);
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = super::dashboard::show(&handle);
+                });
             }
             "quit" => {
                 app.exit(0);

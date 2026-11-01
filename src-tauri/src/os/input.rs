@@ -1,13 +1,18 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use enigo::{Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
+use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use rand::Rng;
 use tauri::Emitter;
 use windows_sys::Win32::Foundation::POINT;
 use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
+static PANIC_HOOK_RUNNING: AtomicBool = AtomicBool::new(false);
+static ABORT_INPUT: AtomicBool = AtomicBool::new(false);
+
 /// Mô phỏng di chuyển chuột mượt mà theo đường cong Bézier.
 fn move_mouse_bezier_internal(target_x: i32, target_y: i32) {
+    ABORT_INPUT.store(false, Ordering::SeqCst);
     let mut enigo = match Enigo::new(&Settings::default()) {
         Ok(e) => e,
         Err(_) => return,
@@ -31,6 +36,9 @@ fn move_mouse_bezier_internal(target_x: i32, target_y: i32) {
 
     let steps = 30;
     for i in 1..=steps {
+        if ABORT_INPUT.load(Ordering::SeqCst) {
+            break;
+        }
         let t = i as f32 / steps as f32;
         
         let x = (1.0 - t).powi(3) * start_x as f32
@@ -100,6 +108,7 @@ pub fn move_mouse_normalized(
 
 #[tauri::command(async)]
 pub fn send_keystroke(text: String) {
+    ABORT_INPUT.store(false, Ordering::SeqCst);
     let mut enigo = match Enigo::new(&Settings::default()) {
         Ok(e) => e,
         Err(_) => return,
@@ -107,29 +116,55 @@ pub fn send_keystroke(text: String) {
     let mut rng = rand::thread_rng();
     
     for c in text.chars() {
-        let _ = enigo.text(&c.to_string());
-        thread::sleep(Duration::from_millis(rng.gen_range(30..90)));
+        if ABORT_INPUT.load(Ordering::SeqCst) {
+            break;
+        }
+        match c {
+            '\r' => continue,
+            '\n' => {
+                let _ = enigo.key(Key::Return, Direction::Click);
+            }
+            '\t' => {
+                let _ = enigo.key(Key::Tab, Direction::Click);
+            }
+            _ => {
+                let _ = enigo.text(&c.to_string());
+            }
+        }
+        thread::sleep(Duration::from_millis(rng.gen_range(25..75)));
     }
 }
 
 #[tauri::command(async)]
 pub fn mouse_click(button: String) {
+    if ABORT_INPUT.load(Ordering::SeqCst) {
+        return;
+    }
     let mut enigo = match Enigo::new(&Settings::default()) {
         Ok(e) => e,
         Err(_) => return,
     };
-    let btn = match button.as_str() {
-        "right" => Button::Right,
-        _ => Button::Left,
-    };
-    let _ = enigo.button(btn, Direction::Click);
+    match button.as_str() {
+        "right" => {
+            let _ = enigo.button(Button::Right, Direction::Click);
+        }
+        "middle" => {
+            let _ = enigo.button(Button::Middle, Direction::Click);
+        }
+        "double" => {
+            let _ = enigo.button(Button::Left, Direction::Click);
+            thread::sleep(Duration::from_millis(60));
+            let _ = enigo.button(Button::Left, Direction::Click);
+        }
+        _ => {
+            let _ = enigo.button(Button::Left, Direction::Click);
+        }
+    }
 }
-
-static PANIC_HOOK_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[tauri::command]
 pub fn setup_panic_hook(app: tauri::AppHandle) {
-    if PANIC_HOOK_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    if PANIC_HOOK_RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
     println!("Panic hook ready: Listening for 3x ESC presses");
@@ -151,6 +186,7 @@ pub fn setup_panic_hook(app: tauri::AppHandle) {
 
                 if esc_count >= 3 {
                     println!("[ORBIS] PANIC TRIGGERED! Stopping active agent tasks...");
+                    ABORT_INPUT.store(true, Ordering::SeqCst);
                     let _ = app.emit("orbis:panic", ());
                     esc_count = 0;
                 }

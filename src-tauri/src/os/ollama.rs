@@ -33,10 +33,46 @@ fn client(timeout_secs: u64) -> reqwest::Client {
         .unwrap_or_default()
 }
 
-/// Kiểm tra nhanh cổng TCP 127.0.0.1:11434 đã có tiến trình Ollama lắng nghe hay chưa.
+/// Kiểm tra nhanh cổng TCP của Ollama đã có tiến trình lắng nghe hay chưa.
 fn is_ollama_port_open() -> bool {
-    let addr: SocketAddr = "127.0.0.1:11434".parse().unwrap();
+    let base = get_base_url();
+    let host_port = base
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or("127.0.0.1:11434");
+    let addr: SocketAddr = host_port
+        .parse()
+        .unwrap_or_else(|_| "127.0.0.1:11434".parse().unwrap());
     TcpStream::connect_timeout(&addr, Duration::from_millis(800)).is_ok()
+}
+
+async fn async_sleep_ms(ms: u64) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        std::thread::sleep(Duration::from_millis(ms));
+    })
+    .await;
+}
+
+fn strip_data_uri_prefix(raw: &str) -> String {
+    if let Some(idx) = raw.find(";base64,") {
+        raw[(idx + 8)..].trim().to_string()
+    } else {
+        raw.trim().to_string()
+    }
+}
+
+fn is_ollama_vision_model(model_name: &str) -> bool {
+    let lower = model_name.to_lowercase();
+    lower.contains("vision")
+        || lower.contains("vl")
+        || lower.contains("llava")
+        || lower.contains("minicpm")
+        || lower.contains("bakllava")
+        || lower.contains("gemma3")
+        || lower.contains("pixtral")
+        || lower.contains("moondream")
 }
 
 #[derive(Serialize, Clone)]
@@ -93,7 +129,7 @@ pub async fn ensure_ollama_daemon() -> Result<(), String> {
     let _ = spawn_ollama_process();
 
     for _ in 0..8 {
-        std::thread::sleep(Duration::from_millis(500));
+        async_sleep_ms(500).await;
         if is_ollama_port_open() {
             return Ok(());
         }
@@ -198,9 +234,9 @@ async fn resolve_local_model(c: &reqwest::Client, requested: Option<String>) -> 
         .ok_or_else(|| "Không tìm thấy model phù hợp trong Ollama".to_string())
 }
 
-fn make_options(ctx: u64) -> Value {
+fn make_options(ctx: u64, full_gpu: bool) -> Value {
     json!({
-        "num_gpu": 999,
+        "num_gpu": if full_gpu { 999 } else { -1 },
         "num_ctx": ctx,
         "temperature": 0.2
     })
@@ -213,7 +249,7 @@ async fn send_chat(c: &reqwest::Client, body: &Value) -> Result<Value, String> {
         Err(e) => {
             if !is_ollama_port_open() {
                 let _ = spawn_ollama_process();
-                std::thread::sleep(Duration::from_millis(1500));
+                async_sleep_ms(1500).await;
             }
             c.post(format!("{base}/api/chat"))
                 .json(body)
@@ -261,38 +297,40 @@ pub async fn ollama_chat(
 ) -> Result<ChatReply, String> {
     let c = client(180);
     let resolved_model = resolve_local_model(&c, model).await?;
-    let is_vision_model = {
-        let lower = resolved_model.to_lowercase();
-        lower.contains("vision")
-            || lower.contains("-vl")
-            || lower.contains("llava")
-            || lower.contains("minicpm")
-            || lower.contains("bakllava")
-    };
+    let is_vision_model = is_ollama_vision_model(&resolved_model);
 
     let msgs: Vec<Value> = messages
         .iter()
         .map(|m| {
             let mut o = json!({ "role": m.role, "content": m.content });
-            // Chỉ đính kèm ảnh nếu model thực sự hỗ trợ Vision
+            // Chỉ đính kèm ảnh (đã bóc tiền tố data:...;base64,) nếu model thực sự hỗ trợ Vision
             if !m.images.is_empty() && is_vision_model {
-                o["images"] = json!(m.images);
+                let cleaned_imgs: Vec<String> = m
+                    .images
+                    .iter()
+                    .map(|img| strip_data_uri_prefix(img))
+                    .filter(|img| !img.is_empty())
+                    .collect();
+                if !cleaned_imgs.is_empty() {
+                    o["images"] = json!(cleaned_imgs);
+                }
             }
             o
         })
         .collect();
 
     let mut used_options = max_power.unwrap_or(true);
+    let initial_ctx = if used_options { DEFAULT_CTX } else { FALLBACK_CTX };
     let mut body = json!({
         "model": resolved_model,
         "messages": msgs,
         "stream": false,
         "format": "json",
         "keep_alive": "15m",
-        "options": make_options(DEFAULT_CTX)
+        "options": make_options(initial_ctx, used_options)
     });
 
-    // Lượt 1: Gửi chuẩn với num_ctx = 4096 và format = "json"
+    // Lượt 1: Gửi chuẩn với num_ctx đã chọn và format = "json"
     let reply = match send_chat(&c, &body).await {
         Ok(v) => v,
         Err(err) => {
@@ -306,7 +344,7 @@ pub async fn ollama_chat(
                     }
                 }
             }
-            body["options"] = make_options(FALLBACK_CTX);
+            body["options"] = make_options(FALLBACK_CTX, false);
             used_options = false;
 
             match send_chat(&c, &body).await {
@@ -353,15 +391,22 @@ pub async fn ollama_generate(
         "stream": false,
         "format": "json",
         "keep_alive": "15m",
-        "options": make_options(DEFAULT_CTX)
+        "options": make_options(DEFAULT_CTX, true)
     });
 
     if let Some(sys_prompt) = system {
         body["system"] = json!(sys_prompt);
     }
     if let Some(imgs) = images {
-        if !imgs.is_empty() {
-            body["images"] = json!(imgs);
+        if !imgs.is_empty() && is_ollama_vision_model(&resolved_model) {
+            let cleaned: Vec<String> = imgs
+                .iter()
+                .map(|img| strip_data_uri_prefix(img))
+                .filter(|img| !img.is_empty())
+                .collect();
+            if !cleaned.is_empty() {
+                body["images"] = json!(cleaned);
+            }
         }
     }
 
@@ -714,9 +759,14 @@ pub async fn cloud_llm_chat(
             let mut v: Value = resp.json().await.map_err(|e| format!("Lỗi đọc JSON từ Gemini: {e}"))?;
             let mut final_model = resolved_model.clone();
 
-            // Nếu model (vd gemini-2.0-flash) bị lỗi 404/400, thử tự động với gemini-1.5-flash
-            if v.get("error").is_some() && resolved_model != "gemini-1.5-flash" {
-                final_model = "gemini-1.5-flash".to_string();
+            // Nếu model tùy chỉnh bị lỗi 404/400, thử tự động fallback sang gemini-2.5-flash hoặc gemini-2.0-flash
+            let fallback_gemini = if resolved_model == "gemini-2.5-flash" {
+                "gemini-2.0-flash"
+            } else {
+                "gemini-2.5-flash"
+            };
+            if v.get("error").is_some() && resolved_model != fallback_gemini {
+                final_model = fallback_gemini.to_string();
                 let fallback_body = json!({
                     "systemInstruction": {
                         "parts": [{ "text": system_prompt }]
@@ -736,7 +786,9 @@ pub async fn cloud_llm_chat(
                 );
                 if let Ok(r2) = c.post(&fallback_url).query(&[("key", clean_key)]).json(&fallback_body).send().await {
                     if let Ok(v2) = r2.json::<Value>().await {
-                        v = v2;
+                        if v2.get("error").is_none() {
+                            v = v2;
+                        }
                     }
                 }
             }
@@ -768,15 +820,26 @@ pub async fn cloud_llm_chat(
                 }));
             }
 
-            let body = json!({
-                "model": resolved_model,
-                "messages": [
-                    { "role": "system", "content": system_prompt },
-                    { "role": "user", "content": user_content }
-                ],
-                "response_format": { "type": "json_object" },
-                "temperature": 0.2
-            });
+            let is_reasoning = resolved_model.to_lowercase().starts_with('o');
+            let body = if is_reasoning {
+                json!({
+                    "model": resolved_model,
+                    "messages": [
+                        { "role": "system", "content": system_prompt },
+                        { "role": "user", "content": user_content }
+                    ]
+                })
+            } else {
+                json!({
+                    "model": resolved_model,
+                    "messages": [
+                        { "role": "system", "content": system_prompt },
+                        { "role": "user", "content": user_content }
+                    ],
+                    "response_format": { "type": "json_object" },
+                    "temperature": 0.2
+                })
+            };
 
             let resp = c
                 .post("https://api.openai.com/v1/chat/completions")

@@ -13,7 +13,9 @@ if exist "%~dp0scripts\update-app.ps1" (
     powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://raw.githubusercontent.com/siloneedsleep/orbis-agent/main/scripts/update-app.ps1 | iex"
 )
 
-echo.
-echo Hoan tat! Tep nay se tu dong bien mat sau giay lat.
-ping 127.0.0.1 -n 3 >nul
-(goto) 2>nul & del "%~f0"
+if not exist "%~dp0.git" (
+    echo.
+    echo Hoan tat! Tep nay se tu dong bien mat sau giay lat.
+    ping 127.0.0.1 -n 3 >nul
+    (goto) 2>nul & del "%~f0"
+)

@@ -9,19 +9,21 @@ interface SettingsModalProps {
   config?: LLMConfig | null;
   onUpdate?: (profile: UserProfile, config: LLMConfig) => void;
   initialTab?: SettingsTab;
+  isAdmin?: boolean;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   initialTab = 'mcp',
+  isAdmin,
 }) => {
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
       <div className="w-full max-w-5xl h-[85vh] rounded-3xl border border-zinc-700 bg-zinc-950 shadow-2xl overflow-hidden flex flex-col">
-        <UnifiedSettingsView initialTab={initialTab} onClose={onClose} />
+        <UnifiedSettingsView initialTab={initialTab} onClose={onClose} isAdmin={isAdmin} />
       </div>
     </div>
   );

@@ -278,7 +278,7 @@ export function addCatExp(amount: number): CatSettings {
   const updated: CatSettings = {
     ...current,
     bondLevel: newLevel,
-    bondExp: Math.min(newExp, 99),
+    bondExp: newLevel >= 10 ? Math.min(newExp, 100) : Math.min(newExp, 99),
     treats: current.treats + bonusTreats,
   };
   saveStoredCatSettings(updated);
@@ -347,6 +347,13 @@ export function renameCat(newName: string): { success: boolean; settings: CatSet
 const PROFILE_KEY = 'orbis_user_profile';
 const LLM_KEY = 'orbis_llm_config';
 
+const DEFAULT_CLOUD_MODEL_BY_PROVIDER: Record<'deepseek' | 'gemini' | 'openai' | 'claude', string> = {
+  deepseek: 'deepseek-chat',
+  gemini: 'gemini-2.5-flash',
+  openai: 'gpt-4o',
+  claude: 'claude-3-5-sonnet-20241022',
+};
+
 type StoreChangeListener = () => void;
 const storeListeners = new Set<StoreChangeListener>();
 
@@ -365,19 +372,21 @@ function normalizeLLMConfig(rawConfig: Partial<LLMConfig> | null): LLMConfig | n
   ) as 'deepseek' | 'gemini' | 'openai' | 'claude';
   const provider = isLocal ? 'ollama' : cloudProvider;
 
+  const defaultCloudModel = DEFAULT_CLOUD_MODEL_BY_PROVIDER[cloudProvider] || 'deepseek-chat';
   const localModel = rawConfig.localModel || (isLocal ? rawConfig.model : undefined) || 'auto';
-  const cloudModel = rawConfig.cloudModel || (!isLocal ? rawConfig.model : undefined) || 'deepseek-chat';
+  const cloudModel = rawConfig.cloudModel || (!isLocal ? rawConfig.model : undefined) || defaultCloudModel;
   const model = isLocal ? localModel : cloudModel;
 
-  let apiKey = rawConfig.apiKey;
-  if (!apiKey && typeof window !== 'undefined' && window.localStorage) {
-    apiKey =
-      localStorage.getItem(`orbis_${cloudProvider}_key`) ||
-      localStorage.getItem('orbis_gemini_key') ||
-      localStorage.getItem('orbis_openai_key') ||
-      localStorage.getItem('orbis_claude_key') ||
-      localStorage.getItem('orbis_deepseek_key') ||
-      undefined;
+  let apiKey: string | undefined = undefined;
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const storedForProvider = localStorage.getItem(`orbis_${cloudProvider}_key`);
+    if (storedForProvider !== null) {
+      apiKey = storedForProvider.trim() || undefined;
+    } else {
+      apiKey = rawConfig.apiKey?.trim() || undefined;
+    }
+  } else {
+    apiKey = rawConfig.apiKey?.trim() || undefined;
   }
 
   return {
@@ -430,21 +439,42 @@ export function saveStoredLLMConfig(config: LLMConfig): void {
       : config.cloudProvider || prev?.cloudProvider || (prev?.provider !== 'ollama' ? prev?.provider : 'deepseek') || 'deepseek'
   ) as 'deepseek' | 'gemini' | 'openai' | 'claude';
 
+  const defaultCloudModel = DEFAULT_CLOUD_MODEL_BY_PROVIDER[cloudProvider] || 'deepseek-chat';
+  const storedProviderKey =
+    typeof window !== 'undefined' && window.localStorage
+      ? localStorage.getItem(`orbis_${cloudProvider}_key`)?.trim() || undefined
+      : undefined;
+
+  let resolvedApiKey: string | undefined;
+  if (!isLocal && typeof config.apiKey === 'string') {
+    resolvedApiKey = config.apiKey.trim() || undefined;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      if (resolvedApiKey) {
+        localStorage.setItem(`orbis_${cloudProvider}_key`, resolvedApiKey);
+      } else {
+        localStorage.removeItem(`orbis_${cloudProvider}_key`);
+      }
+    }
+  } else if (typeof config.apiKey === 'string' && config.apiKey.trim()) {
+    resolvedApiKey = config.apiKey.trim();
+    if (typeof window !== 'undefined' && window.localStorage) {
+      localStorage.setItem(`orbis_${cloudProvider}_key`, resolvedApiKey);
+    }
+  } else {
+    resolvedApiKey = storedProviderKey || (prev?.cloudProvider === cloudProvider ? prev?.apiKey : undefined);
+  }
+
   const merged: LLMConfig = {
     type: isLocal ? 'local' : 'api',
     mode: isLocal ? 'local' : 'cloud',
     provider: isLocal ? 'ollama' : cloudProvider,
-    model: config.model || (isLocal ? prev?.localModel || 'auto' : prev?.cloudModel || 'deepseek-chat'),
+    model: config.model || (isLocal ? prev?.localModel || 'auto' : prev?.cloudModel || defaultCloudModel),
     localModel: isLocal ? (config.localModel || config.model || 'auto') : (config.localModel || prev?.localModel || 'auto'),
-    cloudModel: !isLocal ? (config.cloudModel || config.model || 'deepseek-chat') : (config.cloudModel || prev?.cloudModel || 'deepseek-chat'),
+    cloudModel: !isLocal ? (config.cloudModel || config.model || defaultCloudModel) : (config.cloudModel || prev?.cloudModel || defaultCloudModel),
     cloudProvider,
-    apiKey: config.apiKey?.trim() || prev?.apiKey,
+    apiKey: resolvedApiKey,
     maxPower: config.maxPower ?? prev?.maxPower ?? true,
   };
-
-  if (merged.apiKey && typeof window !== 'undefined' && window.localStorage) {
-    localStorage.setItem(`orbis_${cloudProvider}_key`, merged.apiKey);
-  }
 
   cachedLLMConfig = merged;
   localStorage.setItem(LLM_KEY, JSON.stringify(merged));

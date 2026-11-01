@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   CatSettings, 
   CatSkill, 
@@ -6,7 +6,9 @@ import {
   saveStoredCatSettings, 
   addCatExp,
   renameCat,
-  CatColorTheme
+  CatColorTheme,
+  getStoredProfile,
+  subscribeAgentStore
 } from '@/state/agentStore';
 import { redeemCode, RedeemResult } from '@/services/redeemService';
 import { events } from '@/ipc/events';
@@ -54,6 +56,12 @@ export const TeachCatView: React.FC<TeachCatViewProps> = ({ onSettingsChange }) 
   const [redeemInput, setRedeemInput] = useState('');
   const [redeemMsg, setRedeemMsg] = useState<{ text: string; success: boolean } | null>(null);
 
+  useEffect(() => {
+    return subscribeAgentStore(() => {
+      setSettings(getStoredCatSettings());
+    });
+  }, []);
+
   const updateSettings = (updated: CatSettings) => {
     setSettings(updated);
     saveStoredCatSettings(updated);
@@ -87,13 +95,12 @@ export const TeachCatView: React.FC<TeachCatViewProps> = ({ onSettingsChange }) 
       category: newSkillCategory,
     };
 
-    const updated = {
-      ...settings,
-      taughtSkills: [newSkill, ...settings.taughtSkills],
-    };
-    // Dạy bài học mới được thưởng 20 EXP!
+    // Dạy bài học mới được thưởng 20 EXP (+50 Treats nếu lên cấp — giữ nguyên withExp.treats)
     const withExp = addCatExp(20);
-    const finalSettings = { ...updated, bondLevel: withExp.bondLevel, bondExp: withExp.bondExp };
+    const finalSettings: CatSettings = {
+      ...withExp,
+      taughtSkills: [newSkill, ...withExp.taughtSkills],
+    };
     updateSettings(finalSettings);
 
     // Phát sự kiện mèo vui
@@ -111,13 +118,14 @@ export const TeachCatView: React.FC<TeachCatViewProps> = ({ onSettingsChange }) 
   const handleRenameSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const res = renameCat(renameInput);
+    const pronoun = getStoredProfile()?.pronoun || 'anh';
     if (res.success) {
       updateSettings(res.settings);
       setRenameMsg(null);
       setShowRenameModal(false);
       events.emitPetState({
         state: 'done',
-        message: `Từ giờ hãy gọi em là "${res.settings.name}" nha anh! 💖`
+        message: `Từ giờ hãy gọi em là "${res.settings.name}" nha ${pronoun}! 💖`
       }).catch(() => {});
     } else {
       setRenameMsg(res.message);
@@ -147,7 +155,7 @@ export const TeachCatView: React.FC<TeachCatViewProps> = ({ onSettingsChange }) 
 
   const handlePetCat = () => {
     const withExp = addCatExp(5);
-    updateSettings({ ...settings, bondLevel: withExp.bondLevel, bondExp: withExp.bondExp });
+    updateSettings(withExp);
     events.emitPetState({
       state: 'petting',
       message: 'Purrr... Em thích xoa đầu lắm! 💖'
@@ -156,7 +164,7 @@ export const TeachCatView: React.FC<TeachCatViewProps> = ({ onSettingsChange }) 
 
   const handleFeedCat = () => {
     const withExp = addCatExp(10);
-    updateSettings({ ...settings, bondLevel: withExp.bondLevel, bondExp: withExp.bondExp });
+    updateSettings(withExp);
     events.emitPetState({
       state: 'feed',
       message: 'Măm măm... Cá ngừ ngon quá! 🐟'
@@ -165,7 +173,7 @@ export const TeachCatView: React.FC<TeachCatViewProps> = ({ onSettingsChange }) 
 
   const handleDrinkCat = () => {
     const withExp = addCatExp(5);
-    updateSettings({ ...settings, bondLevel: withExp.bondLevel, bondExp: withExp.bondExp });
+    updateSettings(withExp);
     events.emitPetState({
       state: 'drink',
       message: 'Nước mát ngọt lành! 💧'

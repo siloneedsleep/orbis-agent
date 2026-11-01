@@ -12,6 +12,8 @@ if not exist "%PS1_FILE%" (
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1_FILE%"
 
-echo Dang don dep va tu dong xoa file cai dat...
-start /b "" cmd /c "ping 127.0.0.1 -n 2 >nul & del /f /q \"%~f0\""
+if not exist "%~dp0.git" (
+    echo Dang don dep va tu dong xoa file cai dat...
+    start /b "" cmd /c "ping 127.0.0.1 -n 2 >nul & del /f /q \"%~f0\""
+)
 exit

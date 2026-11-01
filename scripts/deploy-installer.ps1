@@ -36,7 +36,7 @@ $targetDeployDirs = @(
 # 1. Dong tat ca tien trinh Orbis Agent cu dang chay
 Write-Host "[1/6] Phat hien va dong tat ca tien trinh Orbis cu..." -ForegroundColor Cyan
 $runningProcs = Get-Process | Where-Object { 
-    $_.ProcessName -like "*orbis*" -or $_.ProcessName -like "*tauri*" 
+    $_.ProcessName -eq "orbis-agent" -or $_.ProcessName -like "orbis*" 
 }
 foreach ($proc in $runningProcs) {
     try {
@@ -87,12 +87,18 @@ if (-not $SourceDir) {
 Write-Host "[3/6] Tu dong ghi de ban cu bang ban .exe standalone moi nhat..." -ForegroundColor Cyan
 $BuiltReleaseExe = Join-Path $SourceDir "src-tauri\target\release\orbis-agent.exe"
 
-# Kiem tra xem file .exe da duoc nhung day du tai nguyen frontend (khong can localhost) chua
-$needsBuild = -not (Test-Path $BuiltReleaseExe)
-if (Test-Path $BuiltReleaseExe) {
-    # File standalone embedded assets phai >= 5,000,000 bytes
-    if ((Get-Item $BuiltReleaseExe).Length -lt 5000000) {
+# Kiem tra xem file .exe da duoc nhung day du tai nguyen frontend va moi hon ma nguon chua
+$needsBuild = -not $SkipBuild -and (-not (Test-Path $BuiltReleaseExe))
+if (-not $SkipBuild -and (Test-Path $BuiltReleaseExe)) {
+    $exeItem = Get-Item $BuiltReleaseExe
+    if ($exeItem.Length -lt 5000000) {
         $needsBuild = $true
+    } else {
+        $latestSrc = Get-ChildItem -Path (Join-Path $SourceDir "src"), (Join-Path $SourceDir "src-tauri\src") -Recurse -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($latestSrc -and $latestSrc.LastWriteTimeUtc -gt $exeItem.LastWriteTimeUtc) {
+            $needsBuild = $true
+        }
     }
 }
 
@@ -224,10 +230,13 @@ if (-not $NoLaunch) {
 Write-Host "`n============================================================" -ForegroundColor Green
 Write-Host "     CAI DAT & KHOI CHAY ORBIS AGENT HOAN TAT!            " -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Green
-Write-Host "Tien trinh cai dat se tu dong xoa file installer va tat ngay bay gio...`n" -ForegroundColor DarkGray
 
-# 7. Tu dong xoa file installer va tat chuong trinh
+# 7. Chi tu dong xoa file installer khi chay doc lap ngoai git repository
 if ($env:INSTALLER_WRAPPER_FILE -and (Test-Path $env:INSTALLER_WRAPPER_FILE)) {
     $batFile = $env:INSTALLER_WRAPPER_FILE
-    Start-Process cmd.exe -ArgumentList "/c ping 127.0.0.1 -n 2 >nul & del /f /q `"$batFile`"" -WindowStyle Hidden
+    $batDir = Split-Path -Parent $batFile
+    if (-not (Test-Path (Join-Path $batDir ".git"))) {
+        Write-Host "Tien trinh cai dat se tu dong xoa file installer va tat ngay bay gio...`n" -ForegroundColor DarkGray
+        Start-Process cmd.exe -ArgumentList "/c ping 127.0.0.1 -n 2 >nul & del /f /q `"$batFile`"" -WindowStyle Hidden
+    }
 }

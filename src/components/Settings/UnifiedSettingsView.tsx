@@ -41,7 +41,8 @@ import {
   saveStoredSandboxPolicy,
   CatSettings,
   getStoredCatSettings,
-  saveStoredCatSettings
+  saveStoredCatSettings,
+  subscribeAgentStore
 } from '@/state/agentStore';
 import { commands, OllamaStatus, McpToolItem } from '@/ipc/commands';
 import { validateApiKey } from '@/services/apiValidator';
@@ -56,7 +57,7 @@ interface UnifiedSettingsViewProps {
 
 const DEFAULT_CLOUD_MODELS: Record<'deepseek' | 'gemini' | 'openai' | 'claude', string> = {
   deepseek: 'deepseek-chat',
-  gemini: 'gemini-2.0-flash',
+  gemini: 'gemini-2.5-flash',
   openai: 'gpt-4o-mini',
   claude: 'claude-3-5-sonnet-20241022',
 };
@@ -64,9 +65,10 @@ const DEFAULT_CLOUD_MODELS: Record<'deepseek' | 'gemini' | 'openai' | 'claude', 
 export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
   initialTab = 'mcp',
   onClose,
-  isAdmin = false,
+  isAdmin,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+  const [resolvedIsAdmin, setResolvedIsAdmin] = useState<boolean>(Boolean(isAdmin));
 
   // 1. MCP State
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>(getStoredMcpServers());
@@ -96,11 +98,11 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
 
   // 3. LLM State
   const currentLlm = getStoredLLMConfig() || {
-    type: 'api',
-    mode: 'cloud',
-    provider: 'deepseek',
+    type: 'api' as const,
+    mode: 'cloud' as const,
+    provider: 'deepseek' as const,
     model: 'deepseek-chat',
-    cloudProvider: 'deepseek',
+    cloudProvider: 'deepseek' as const,
     apiKey: '',
     maxPower: true,
   };
@@ -108,8 +110,13 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
   const [llmProvider, setLlmProvider] = useState<'deepseek' | 'gemini' | 'openai' | 'claude'>(
     currentLlm.provider === 'ollama' ? (currentLlm.cloudProvider || 'deepseek') : (currentLlm.provider as any)
   );
-  const [llmApiKey, setLlmApiKey] = useState(currentLlm.apiKey || '');
+  const [llmApiKey, setLlmApiKey] = useState(() => {
+    const prov = currentLlm.provider === 'ollama' ? (currentLlm.cloudProvider || 'deepseek') : currentLlm.provider;
+    const stored = typeof window !== 'undefined' ? localStorage.getItem(`orbis_${prov}_key`) : null;
+    return stored ?? currentLlm.apiKey ?? '';
+  });
   const [llmModel, setLlmModel] = useState(currentLlm.model || 'deepseek-chat');
+  const [llmMaxPower, setLlmMaxPower] = useState<boolean>(currentLlm.maxPower ?? true);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [validatingLlmKey, setValidatingLlmKey] = useState(false);
@@ -123,12 +130,28 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
 
   // 5. Cat State
   const [catSettings, setCatSettings] = useState<CatSettings>(getStoredCatSettings());
-  const [catSaved, setCatSaved] = useState(false);
 
   // 6. n8n State
   const [n8nConfig, setN8nConfig] = useState<N8nConfig>(getStoredN8nConfig());
   const [n8nTesting, setN8nTesting] = useState(false);
   const [n8nTestResult, setN8nTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Đồng bộ quyền Admin tự động nếu không truyền prop isAdmin
+  useEffect(() => {
+    if (typeof isAdmin === 'boolean') {
+      setResolvedIsAdmin(isAdmin);
+    } else {
+      commands.getSystemInfo().then((s) => setResolvedIsAdmin(s.isAdmin)).catch(() => {});
+    }
+  }, [isAdmin]);
+
+  // Đồng bộ các cài đặt chia sẻ từ agentStore (như EXP/Treats của mèo hoặc Sandbox Policy)
+  useEffect(() => {
+    return subscribeAgentStore(() => {
+      setCatSettings(getStoredCatSettings());
+      setSandboxPolicy(getStoredSandboxPolicy());
+    });
+  }, []);
 
   // Scan Ollama on switch
   const scanOllama = async () => {
@@ -157,7 +180,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
     }
   }, [activeTab, llmType]);
 
-  // Tự động đồng bộ cấu hình MCP từ ~/.gemini/config/mcp_config.json nếu có server chưa nạp token
+  // Tự động đồng bộ cấu hình MCP từ ~/.gemini/config/mcp_config.json nếu có server chưa nạp token hoặc headers
   useEffect(() => {
     const current = getStoredMcpServers();
     if (current.some((s) => !s.authToken)) {
@@ -171,12 +194,17 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
               s.name.toLowerCase() === sysSrv.name.toLowerCase() ||
               (s.serverUrl && s.serverUrl === sysSrv.serverUrl)
           );
-          if (existingIdx >= 0 && !updatedList[existingIdx].authToken && sysSrv.authToken) {
-            updatedList[existingIdx] = {
-              ...updatedList[existingIdx],
-              authToken: sysSrv.authToken,
-            };
-            changed = true;
+          if (existingIdx >= 0) {
+            const needToken = !updatedList[existingIdx].authToken && sysSrv.authToken;
+            const needHeaders = !updatedList[existingIdx].headers && sysSrv.headers;
+            if (needToken || needHeaders) {
+              updatedList[existingIdx] = {
+                ...updatedList[existingIdx],
+                authToken: updatedList[existingIdx].authToken || sysSrv.authToken,
+                headers: updatedList[existingIdx].headers || sysSrv.headers,
+              };
+              changed = true;
+            }
           }
         }
         if (changed) {
@@ -213,6 +241,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
             ...updatedList[existingIdx],
             serverUrl: sysSrv.serverUrl || updatedList[existingIdx].serverUrl,
             authToken: sysSrv.authToken || updatedList[existingIdx].authToken,
+            headers: sysSrv.headers || updatedList[existingIdx].headers,
             command: sysSrv.command || updatedList[existingIdx].command,
           };
         } else {
@@ -222,6 +251,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
             type: sysSrv.type as any,
             serverUrl: sysSrv.serverUrl,
             authToken: sysSrv.authToken,
+            headers: sysSrv.headers,
             command: sysSrv.command,
             enabled: true,
           });
@@ -253,27 +283,28 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
       const res = await commands.testMcpConnection({
         serverUrl: server.serverUrl,
         authToken: server.authToken,
+        customHeaders: server.headers,
       });
 
-      const updated = mcpServers.map((s) => {
-        if (s.id === server.id) {
-          return {
-            ...s,
-            status: 'connected' as const,
-            latencyMs: res.latencyMs,
-            tools: res.tools,
-            lastChecked: new Date().toLocaleTimeString(),
-            errorMessage: undefined,
-          };
-        }
-        return s;
+      setMcpServers((prev) => {
+        const updated = prev.map((s) =>
+          s.id === server.id
+            ? {
+                ...s,
+                status: 'connected' as const,
+                latencyMs: res.latencyMs,
+                tools: res.tools,
+                lastChecked: new Date().toLocaleTimeString(),
+                errorMessage: undefined,
+              }
+            : s
+        );
+        saveStoredMcpServers(updated);
+        setSelectedMcpServer((prevSel) =>
+          prevSel?.id === server.id ? updated.find((s) => s.id === server.id) || null : prevSel
+        );
+        return updated;
       });
-
-      setMcpServers(updated);
-      saveStoredMcpServers(updated);
-      if (selectedMcpServer?.id === server.id) {
-        setSelectedMcpServer(updated.find((s) => s.id === server.id) || null);
-      }
 
       setMcpNotification({
         type: 'success',
@@ -281,19 +312,23 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
       });
     } catch (err: any) {
       const errStr = String(err?.message || err);
-      const updated = mcpServers.map((s) => {
-        if (s.id === server.id) {
-          return {
-            ...s,
-            status: 'error' as const,
-            errorMessage: errStr,
-            lastChecked: new Date().toLocaleTimeString(),
-          };
-        }
-        return s;
+      setMcpServers((prev) => {
+        const updated = prev.map((s) =>
+          s.id === server.id
+            ? {
+                ...s,
+                status: 'error' as const,
+                errorMessage: errStr,
+                lastChecked: new Date().toLocaleTimeString(),
+              }
+            : s
+        );
+        saveStoredMcpServers(updated);
+        setSelectedMcpServer((prevSel) =>
+          prevSel?.id === server.id ? updated.find((s) => s.id === server.id) || null : prevSel
+        );
+        return updated;
       });
-      setMcpServers(updated);
-      saveStoredMcpServers(updated);
       setMcpNotification({
         type: 'error',
         message: `Lỗi kết nối tới ${server.name}: ${errStr}`,
@@ -305,16 +340,20 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
 
   // Toggle MCP Server Enable/Disable
   const handleToggleMcpServer = (id: string) => {
-    const updated = mcpServers.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
-    setMcpServers(updated);
-    saveStoredMcpServers(updated);
+    setMcpServers((prev) => {
+      const updated = prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
+      saveStoredMcpServers(updated);
+      return updated;
+    });
   };
 
   // Xóa MCP Server
   const handleDeleteMcpServer = (id: string) => {
-    const updated = mcpServers.filter((s) => s.id !== id);
-    setMcpServers(updated);
-    saveStoredMcpServers(updated);
+    setMcpServers((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
+      saveStoredMcpServers(updated);
+      return updated;
+    });
     if (selectedMcpServer?.id === id) {
       setSelectedMcpServer(null);
     }
@@ -324,40 +363,48 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
   const handleSaveMcpModal = async () => {
     if (!formMcpName.trim() || !formMcpUrl.trim()) return;
 
-    let updated: McpServerConfig[];
-    if (editingMcpServer) {
-      updated = mcpServers.map((s) =>
-        s.id === editingMcpServer.id
-          ? {
-              ...s,
-              name: formMcpName.trim(),
-              serverUrl: formMcpUrl.trim(),
-              authToken: formMcpToken.trim() || undefined,
-              type: formMcpType,
-            }
-          : s
-      );
-    } else {
-      const newServer: McpServerConfig = {
-        id: `mcp-${Date.now()}`,
-        name: formMcpName.trim(),
-        serverUrl: formMcpUrl.trim(),
-        authToken: formMcpToken.trim() || undefined,
-        type: formMcpType,
-        enabled: true,
-      };
-      updated = [...mcpServers, newServer];
-    }
+    const targetId = editingMcpServer ? editingMcpServer.id : `mcp-${Date.now()}`;
+    const isStdio = formMcpType === 'stdio';
+    let targetServer: McpServerConfig | undefined;
 
-    setMcpServers(updated);
-    saveStoredMcpServers(updated);
+    setMcpServers((prev) => {
+      let updated: McpServerConfig[];
+      if (editingMcpServer) {
+        updated = prev.map((s) =>
+          s.id === targetId
+            ? {
+                ...s,
+                name: formMcpName.trim(),
+                serverUrl: isStdio ? undefined : formMcpUrl.trim(),
+                command: isStdio ? formMcpUrl.trim() : undefined,
+                authToken: formMcpToken.trim() || undefined,
+                type: formMcpType,
+              }
+            : s
+        );
+      } else {
+        const newServer: McpServerConfig = {
+          id: targetId,
+          name: formMcpName.trim(),
+          serverUrl: isStdio ? undefined : formMcpUrl.trim(),
+          command: isStdio ? formMcpUrl.trim() : undefined,
+          authToken: formMcpToken.trim() || undefined,
+          type: formMcpType,
+          enabled: true,
+        };
+        updated = [...prev, newServer];
+      }
+      targetServer = updated.find((s) => s.id === targetId);
+      saveStoredMcpServers(updated);
+      return updated;
+    });
+
     setShowAddMcpModal(false);
     setEditingMcpServer(null);
 
-    // Tự động kiểm tra server vừa lưu
-    const target = updated.find((s) => s.name === formMcpName.trim());
-    if (target) {
-      handleTestMcpServer(target);
+    // Tự động kiểm tra server HTTP/SSE vừa lưu theo đúng targetId
+    if (targetServer && targetServer.type !== 'stdio' && targetServer.serverUrl) {
+      handleTestMcpServer(targetServer);
     }
   };
 
@@ -379,6 +426,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
         toolName: activeToolToRun.name,
         arguments: parsedArgs,
         authToken: selectedMcpServer.authToken,
+        customHeaders: selectedMcpServer.headers,
       });
 
       setToolRunResult({ success: true, data: res });
@@ -419,8 +467,8 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
       localModel: resolvedLocalModel,
       cloudModel: resolvedCloudModel,
       cloudProvider: llmProvider,
-      apiKey: !isLocal ? llmApiKey.trim() : currentLlm.apiKey,
-      maxPower: currentLlm.maxPower ?? true,
+      apiKey: !isLocal ? llmApiKey.trim() : undefined,
+      maxPower: llmMaxPower,
     };
 
     saveStoredLLMConfig(newConfig);
@@ -440,7 +488,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
 
   // Lưu Sandbox Policy
   const handleSelectPolicy = async (p: SandboxExecutionPolicy) => {
-    if (p === 'turbo' && !isAdmin) {
+    if (p === 'turbo' && !resolvedIsAdmin) {
       try {
         saveStoredSandboxPolicy('turbo');
         const msg = await commands.requestAdminElevation();
@@ -720,7 +768,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                         <button
                           type="button"
                           onClick={() => handleTestMcpServer(server)}
-                          disabled={isTesting || !server.enabled}
+                          disabled={isTesting || !server.enabled || server.type === 'stdio' || !server.serverUrl}
                           className="flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 transition disabled:opacity-50"
                         >
                           <RefreshCw className={`h-3 w-3 text-cyan-400 ${isTesting ? 'animate-spin' : ''}`} />
@@ -744,7 +792,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                           onClick={() => {
                             setEditingMcpServer(server);
                             setFormMcpName(server.name);
-                            setFormMcpUrl(server.serverUrl || '');
+                            setFormMcpUrl(server.serverUrl || server.command || '');
                             setFormMcpToken(server.authToken || '');
                             setFormMcpType(server.type);
                             setShowAddMcpModal(true);
@@ -880,6 +928,8 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                   onClick={() => {
                     setLlmType('api');
                     setLlmModel(DEFAULT_CLOUD_MODELS[llmProvider]);
+                    const stored = typeof window !== 'undefined' ? localStorage.getItem(`orbis_${llmProvider}_key`) : null;
+                    setLlmApiKey(stored || '');
                   }}
                   className={`rounded-2xl border p-4 text-left transition ${
                     llmType === 'api'
@@ -888,7 +938,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                   }`}
                 >
                   <div className="text-xs font-bold uppercase tracking-wider">Cloud API</div>
-                  <div className="text-xs text-zinc-400 mt-1">Mô hình mạnh mẽ nhất: DeepSeek V3/R1, Gemini 2.0 Flash, GPT-4o.</div>
+                  <div className="text-xs text-zinc-400 mt-1">Mô hình mạnh mẽ nhất: DeepSeek V3/R1, Gemini 2.5 Flash, GPT-4o.</div>
                 </button>
               </div>
 
@@ -906,7 +956,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                             setLlmModel(DEFAULT_CLOUD_MODELS[p]);
                             setLlmKeyResult(null);
                             const stored = typeof window !== 'undefined' ? localStorage.getItem(`orbis_${p}_key`) : null;
-                            if (stored) setLlmApiKey(stored);
+                            setLlmApiKey(stored || '');
                           }}
                           className={`rounded-xl border py-2 text-xs font-medium capitalize transition ${
                             llmProvider === p
@@ -961,41 +1011,58 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-zinc-400">Model Ollama Cục bộ</label>
-                    <button
-                      type="button"
-                      onClick={scanOllama}
-                      disabled={ollamaLoading}
-                      className="flex items-center gap-1 text-xs text-cyan-400 hover:underline"
-                    >
-                      <RefreshCw className={`h-3 w-3 ${ollamaLoading ? 'animate-spin' : ''}`} />
-                      Quét lại mô hình
-                    </button>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-zinc-400">Model Ollama Cục bộ</label>
+                      <button
+                        type="button"
+                        onClick={scanOllama}
+                        disabled={ollamaLoading}
+                        className="flex items-center gap-1 text-xs text-cyan-400 hover:underline"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${ollamaLoading ? 'animate-spin' : ''}`} />
+                        Quét lại mô hình
+                      </button>
+                    </div>
+                    {ollamaStatus && ollamaStatus.models.length > 0 ? (
+                      <select
+                        value={llmModel}
+                        onChange={(e) => setLlmModel(e.target.value)}
+                        className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs text-white focus:border-cyan-400 focus:outline-none"
+                      >
+                        <option value="auto">Tự động ({ollamaStatus.largest || 'Model lớn nhất'})</option>
+                        {ollamaStatus.models.map((m) => (
+                          <option key={m.name} value={m.name}>
+                            {m.name} ({(m.sizeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB)
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder="auto hoặc tên model (vd: qwen2.5-coder:14b)"
+                        value={llmModel}
+                        onChange={(e) => setLlmModel(e.target.value)}
+                        className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs font-mono text-white focus:border-cyan-400 focus:outline-none"
+                      />
+                    )}
                   </div>
-                  {ollamaStatus && ollamaStatus.models.length > 0 ? (
-                    <select
-                      value={llmModel}
-                      onChange={(e) => setLlmModel(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs text-white focus:border-cyan-400 focus:outline-none"
-                    >
-                      <option value="auto">Tự động ({ollamaStatus.largest || 'Model lớn nhất'})</option>
-                      {ollamaStatus.models.map((m) => (
-                        <option key={m.name} value={m.name}>
-                          {m.name} ({(m.sizeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB)
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
+
+                  <label className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950/60 px-3.5 py-2.5 cursor-pointer">
+                    <div>
+                      <div className="text-xs font-medium text-zinc-200">Chế độ Max Power (Full GPU VRAM)</div>
+                      <div className="text-[11px] text-zinc-500">
+                        Nạp toàn bộ lớp model lên GPU (num_ctx 4096). Tắt để tiết kiệm VRAM (num_ctx 2048).
+                      </div>
+                    </div>
                     <input
-                      type="text"
-                      placeholder="auto hoặc tên model (vd: qwen2.5-coder:14b)"
-                      value={llmModel}
-                      onChange={(e) => setLlmModel(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs font-mono text-white focus:border-cyan-400 focus:outline-none"
+                      type="checkbox"
+                      checked={llmMaxPower}
+                      onChange={(e) => setLlmMaxPower(e.target.checked)}
+                      className="rounded border-zinc-700 bg-zinc-800 text-cyan-500 focus:ring-0"
                     />
-                  )}
+                  </label>
                 </div>
               )}
 
@@ -1074,7 +1141,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-zinc-100">{opt.name}</span>
-                        {opt.requiresAdmin && !isAdmin && (
+                        {opt.requiresAdmin && !resolvedIsAdmin && (
                           <span className="rounded bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300">
                             Cần Admin
                           </span>
@@ -1278,51 +1345,58 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                 <input
                   type="checkbox"
                   checked={n8nConfig.enabled}
-                  onChange={(e) => setN8nConfig({ ...n8nConfig, enabled: e.target.checked })}
+                  onChange={(e) => {
+                    const next = { ...n8nConfig, enabled: e.target.checked };
+                    setN8nConfig(next);
+                    saveStoredN8nConfig(next);
+                  }}
                   className="rounded border-zinc-700 bg-zinc-800 text-rose-500 focus:ring-0"
                 />
                 <span>Kích hoạt Webhook</span>
               </label>
             </div>
 
-            <div className={`rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4 ${!n8nConfig.enabled ? 'opacity-50 pointer-events-none' : ''}`}>
-              <div className="space-y-1.5">
-                <label className="text-xs text-zinc-400">Webhook URL</label>
-                <input
-                  type="text"
-                  placeholder="https://.../webhook/orbis-bridge"
-                  value={n8nConfig.webhookUrl}
-                  onChange={(e) => setN8nConfig({ ...n8nConfig, webhookUrl: e.target.value })}
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs font-mono text-white focus:border-rose-400 focus:outline-none"
-                />
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4">
+              <div className={`space-y-4 ${!n8nConfig.enabled ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="space-y-1.5">
+                  <label className="text-xs text-zinc-400">Webhook URL</label>
+                  <input
+                    type="text"
+                    placeholder="https://.../webhook/orbis-bridge"
+                    value={n8nConfig.webhookUrl}
+                    onChange={(e) => setN8nConfig({ ...n8nConfig, webhookUrl: e.target.value })}
+                    className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs font-mono text-white focus:border-rose-400 focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-zinc-400">
+                    <span>Bearer Token / API Key (Tùy chọn)</span>
+                    <button
+                      type="button"
+                      onClick={handleTestN8n}
+                      disabled={n8nTesting || !n8nConfig.webhookUrl.trim()}
+                      className="text-rose-400 hover:underline disabled:opacity-50"
+                    >
+                      {n8nTesting ? 'Đang test...' : 'Test Webhook'}
+                    </button>
+                  </div>
+                  <input
+                    type="password"
+                    placeholder="Nhập Bearer Token nếu webhook yêu cầu xác thực..."
+                    value={n8nConfig.apiKey || ''}
+                    onChange={(e) => setN8nConfig({ ...n8nConfig, apiKey: e.target.value })}
+                    className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs text-white font-mono focus:border-rose-400 focus:outline-none"
+                  />
+                </div>
               </div>
 
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs text-zinc-400">
-                  <span>Bearer Token / API Key (Tùy chọn)</span>
-                  <button
-                    type="button"
-                    onClick={handleTestN8n}
-                    disabled={n8nTesting || !n8nConfig.webhookUrl.trim()}
-                    className="text-rose-400 hover:underline disabled:opacity-50"
-                  >
-                    {n8nTesting ? 'Đang test...' : 'Test Webhook'}
-                  </button>
+              {n8nTestResult && (
+                <div className={`flex items-center gap-1.5 text-xs mt-1.5 ${n8nTestResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {n8nTestResult.success ? <Check className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
+                  <span>{n8nTestResult.message}</span>
                 </div>
-                <input
-                  type="password"
-                  placeholder="Nhập Bearer Token nếu webhook yêu cầu xác thực..."
-                  value={n8nConfig.apiKey || ''}
-                  onChange={(e) => setN8nConfig({ ...n8nConfig, apiKey: e.target.value })}
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs text-white font-mono focus:border-rose-400 focus:outline-none"
-                />
-                {n8nTestResult && (
-                  <div className={`flex items-center gap-1.5 text-xs mt-1.5 ${n8nTestResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {n8nTestResult.success ? <Check className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
-                    <span>{n8nTestResult.message}</span>
-                  </div>
-                )}
-              </div>
+              )}
 
               <div className="flex justify-end pt-2">
                 <button
@@ -1393,10 +1467,12 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs text-zinc-400">Server Endpoint URL</label>
+                <label className="text-xs text-zinc-400">
+                  {formMcpType === 'stdio' ? 'Lệnh khởi chạy (Command)' : 'Server Endpoint URL'}
+                </label>
                 <input
                   type="text"
-                  placeholder="https://.../mcp-server/http"
+                  placeholder={formMcpType === 'stdio' ? 'npx -y @modelcontextprotocol/server-filesystem ...' : 'https://.../mcp-server/http'}
                   value={formMcpUrl}
                   onChange={(e) => setFormMcpUrl(e.target.value)}
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-mono text-white focus:border-emerald-400 focus:outline-none"

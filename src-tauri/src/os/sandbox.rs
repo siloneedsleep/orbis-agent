@@ -46,8 +46,14 @@ pub fn start_sandbox_vm() -> Result<String, String> {
     let (root, workspace, _) = ensure_sandbox_dirs()?;
     let ws_str = workspace.to_string_lossy().to_string();
 
-    // Tạo file cấu hình Windows Sandbox (.wsb)
+    // Tạo file cấu hình Windows Sandbox (.wsb) - escape ký tự XML đặc biệt trong đường dẫn
     let wsb_path = root.join("OrbisSandbox.wsb");
+    let escaped_ws = ws_str
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;");
     let wsb_xml = format!(
         "<Configuration>\r\n\
            <VGpu>Enable</VGpu>\r\n\
@@ -60,7 +66,7 @@ pub fn start_sandbox_vm() -> Result<String, String> {
              </MappedFolder>\r\n\
            </MappedFolders>\r\n\
          </Configuration>",
-        ws_str
+        escaped_ws
     );
     let _ = fs::write(&wsb_path, wsb_xml);
 
@@ -105,7 +111,8 @@ pub fn create_sandbox_checkpoint(snapshot_name: String) -> Result<String, String
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
         .collect();
-    let target = checkpoints.join(if safe_name.is_empty() { "checkpoint_default" } else { &safe_name });
+    let final_name = if safe_name.is_empty() { "checkpoint_default" } else { &safe_name };
+    let target = checkpoints.join(final_name);
 
     if target.exists() {
         let _ = fs::remove_dir_all(&target);
@@ -113,13 +120,13 @@ pub fn create_sandbox_checkpoint(snapshot_name: String) -> Result<String, String
     fs::create_dir_all(&target).map_err(|e| format!("Không thể tạo thư mục checkpoint: {e}"))?;
 
     let script = format!(
-        "Copy-Item -Path (Join-Path {} '*') -Destination {} -Recurse -Force -ErrorAction SilentlyContinue",
+        "Get-ChildItem -LiteralPath {} -Force | Copy-Item -Destination {} -Recurse -Force -ErrorAction SilentlyContinue",
         ps_quote(&workspace.to_string_lossy()),
         ps_quote(&target.to_string_lossy())
     );
     run_powershell(&script)?;
 
-    Ok(format!("Đã lưu Checkpoint Sandbox: {}", safe_name))
+    Ok(format!("Đã lưu Checkpoint Sandbox: {}", final_name))
 }
 
 #[tauri::command(async)]
@@ -129,22 +136,23 @@ pub fn rollback_sandbox_checkpoint(snapshot_name: String) -> Result<String, Stri
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
         .collect();
-    let source = checkpoints.join(if safe_name.is_empty() { "checkpoint_default" } else { &safe_name });
+    let final_name = if safe_name.is_empty() { "checkpoint_default" } else { &safe_name };
+    let source = checkpoints.join(final_name);
 
     if !source.exists() {
-        return Err(format!("Không tìm thấy Checkpoint '{}' để khôi phục.", safe_name));
+        return Err(format!("Không tìm thấy Checkpoint '{}' để khôi phục.", final_name));
     }
 
     let script = format!(
-        "Get-ChildItem -Path {} -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue; \
-         Copy-Item -Path (Join-Path {} '*') -Destination {} -Recurse -Force -ErrorAction SilentlyContinue",
+        "Get-ChildItem -LiteralPath {} -Force | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue; \
+         Get-ChildItem -LiteralPath {} -Force | Copy-Item -Destination {} -Recurse -Force -ErrorAction SilentlyContinue",
         ps_quote(&workspace.to_string_lossy()),
         ps_quote(&source.to_string_lossy()),
         ps_quote(&workspace.to_string_lossy())
     );
     run_powershell(&script)?;
 
-    Ok(format!("Đã khôi phục Sandbox về Checkpoint: {}", safe_name))
+    Ok(format!("Đã khôi phục Sandbox về Checkpoint: {}", final_name))
 }
 
 #[tauri::command(async)]
