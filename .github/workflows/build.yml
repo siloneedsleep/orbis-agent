@@ -11,9 +11,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm install
+      - run: npm ci
+      - run: npm test
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
       - run: npm run tauri build
       - name: Upload Installer
         uses: actions/upload-artifact@v4

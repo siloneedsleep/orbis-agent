@@ -1,6 +1,5 @@
-use std::path::{Path, PathBuf};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -60,29 +59,37 @@ pub async fn get_pet_info() -> Result<PetInfo, String> {
     })
 }
 
-#[tauri::command]
-pub async fn get_pet_video_base64(clip_name: String) -> Result<String, String> {
-    let dir = get_pet_dir().ok_or_else(|| "Không tìm thấy thư mục video của pet trong com.fureverdock.pawsy".to_string())?;
-
-    let clean_name = clip_name.trim().to_lowercase();
-    let entries = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
-
-    for entry in entries.flatten() {
+pub fn resolve_clip(clip_name: &str) -> Result<PathBuf, String> {
+    let clean = clip_name.trim().to_lowercase();
+    if clean.is_empty()
+        || !clean
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+        || clean.contains("..")
+    {
+        return Err("Tên clip không hợp lệ".into());
+    }
+    let dir = get_pet_dir()
+        .ok_or("Chưa có video CyberCat trên máy này")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let name = clean.strip_suffix(".webm").unwrap_or(&clean);
+    for entry in std::fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
         let path = entry.path();
-        if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
-            let lower = file_name.to_lowercase();
-            // Khớp tên chính xác hoặc khớp tên có tiền tố số (ví dụ: "01-idle-curled-deep-sleep.webm" khớp với "curled-deep-sleep")
-            if lower == clean_name
-                || lower == format!("{clean_name}.webm")
-                || lower.ends_with(&format!("-{clean_name}.webm"))
-                || lower.contains(&clean_name)
-            {
-                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-                let b64 = BASE64.encode(&bytes);
-                return Ok(format!("data:video/webm;base64,{b64}"));
+        let file = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if file == format!("{name}.webm") || file.ends_with(&format!("-{name}.webm")) {
+            let resolved = path.canonicalize().map_err(|e| e.to_string())?;
+            if resolved.starts_with(&dir) && resolved.is_file() {
+                return Ok(resolved);
             }
         }
     }
-
-    Err(format!("Không tìm thấy video clip: {clip_name}"))
+    Err(format!("Không tìm thấy clip: {clip_name}"))
 }

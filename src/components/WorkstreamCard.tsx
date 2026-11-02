@@ -1,3 +1,4 @@
+import { frameUrl } from '@/state/orbisBridge';
 import React, { useState } from 'react';
 import { 
   ChevronDown, 
@@ -36,7 +37,7 @@ export const WorkstreamCard: React.FC<WorkstreamCardProps> = ({ item, onConfirmA
           <div className="flex items-center gap-2 mb-1.5 text-xs text-zinc-400 font-medium">
             <User className="h-3.5 w-3.5 text-cyan-400" />
             <span>Bạn</span>
-            <span className="text-[10px] text-zinc-500 font-mono ml-auto">{item.timestamp}</span>
+            <span className="text-[10px] text-zinc-500 font-mono ml-auto">{Number.isFinite(Number(item.timestamp)) ? new Date(Number(item.timestamp)).toLocaleTimeString('vi-VN') : item.timestamp}</span>
           </div>
           <p className="whitespace-pre-wrap leading-relaxed">{item.content}</p>
         </div>
@@ -54,7 +55,7 @@ export const WorkstreamCard: React.FC<WorkstreamCardProps> = ({ item, onConfirmA
         <div className="max-w-2xl rounded-2xl rounded-tl-sm bg-zinc-900 border border-zinc-800 p-4 text-sm text-zinc-100 shadow-sm space-y-2">
           <div className="flex items-center gap-2 text-xs text-zinc-400 font-medium">
             <span className="text-cyan-400 font-semibold">Orbis Agent</span>
-            <span className="text-[10px] text-zinc-500 font-mono ml-auto">{item.timestamp}</span>
+            <span className="text-[10px] text-zinc-500 font-mono ml-auto">{Number.isFinite(Number(item.timestamp)) ? new Date(Number(item.timestamp)).toLocaleTimeString('vi-VN') : item.timestamp}</span>
           </div>
           <p className="whitespace-pre-wrap leading-relaxed">{item.content}</p>
         </div>
@@ -73,7 +74,7 @@ export const WorkstreamCard: React.FC<WorkstreamCardProps> = ({ item, onConfirmA
         >
           <div className="flex items-center gap-2 font-mono">
             <Sparkles className="h-3.5 w-3.5 text-purple-400 animate-pulse" />
-            <span>Quá trình suy luận (Chain of Thought)</span>
+            <span>Tóm tắt tiến độ</span>
           </div>
           {isThoughtOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
@@ -124,7 +125,7 @@ export const WorkstreamCard: React.FC<WorkstreamCardProps> = ({ item, onConfirmA
             <div>
               <span className="font-semibold text-white tracking-wide">{tool}</span>
               <span className="ml-2 font-mono text-[10px] text-zinc-500">
-                {item.timestamp}
+                {Number.isFinite(Number(item.timestamp)) ? new Date(Number(item.timestamp)).toLocaleTimeString('vi-VN') : item.timestamp}
               </span>
             </div>
           </div>
@@ -199,7 +200,7 @@ export const WorkstreamCard: React.FC<WorkstreamCardProps> = ({ item, onConfirmA
         {status === 'pending_approval' && onConfirmAction && (
           <div className="flex items-center justify-between gap-3 rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-2.5">
             <span className="text-[11px] text-cyan-200">
-              Lệnh này yêu cầu xác nhận trước khi thực thi trong Sandbox. Bạn có cho phép chạy không?
+              Xem hành động và tham số trước khi chấp thuận thực thi.
             </span>
             <div className="flex items-center gap-2 shrink-0">
               <button

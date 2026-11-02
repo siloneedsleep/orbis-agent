@@ -1,3 +1,4 @@
+import type { FrameRef } from '@/state/orbisBridge';
 import { invoke } from "@tauri-apps/api/core";
 
 /** Toạ độ & kích thước theo physical px; x/y đã quy về gốc = góc trên-trái overlay. */
@@ -27,8 +28,6 @@ export interface SystemInfo {
 export interface OllamaMessage {
   role: "system" | "user" | "assistant";
   content: string;
-  /** Ảnh base64 (không có tiền tố data:) cho model vision. */
-  images?: string[];
 }
 
 export interface OllamaReply {
@@ -60,7 +59,6 @@ export interface KeyValidationResult {
 
 export const commands = {
   getOverlayLayout: () => invoke<OverlayLayout>("get_overlay_layout"),
-  setOverlayInteractive: (enabled: boolean) => invoke<void>("set_overlay_interactive", { enabled }),
   getSystemInfo: () => invoke<SystemInfo>("get_system_info"),
   openDashboard: () => invoke<void>("open_dashboard"),
   moveMouseBezier: (x: number, y: number) => invoke<void>("move_mouse_bezier", { x, y }),
@@ -70,49 +68,14 @@ export const commands = {
   sendKeystroke: (text: string) => invoke<void>("send_keystroke", { text }),
   setupPanicHook: () => invoke<void>("setup_panic_hook"),
   captureScreenRegion: (x: number, y: number, width: number, height: number) => 
-    invoke<string>("capture_screen_region", { x, y, width, height }),
+    invoke<FrameRef>("capture_screen_region", { x, y, width, height }),
   ollamaStatus: () => invoke<OllamaStatus>("ollama_status"),
   startOllamaServer: () => invoke<string>("start_ollama_server"),
   checkOllamaDaemon: () => invoke<string>("check_ollama_daemon"),
-  ollamaChat: (messages: OllamaMessage[], opts: OllamaOptions = {}) =>
-    invoke<OllamaReply>("ollama_chat", {
-      messages,
-      model: opts.model ?? null,
-      maxPower: opts.maxPower ?? true,
-    }),
-  callLocalLlm: (messages: OllamaMessage[], opts: OllamaOptions = {}) =>
-    invoke<OllamaReply>("call_local_llm", {
-      messages,
-      model: opts.model ?? null,
-      maxPower: opts.maxPower ?? true,
-    }),
-  ollamaGenerate: (prompt: string, opts: { system?: string; model?: string; images?: string[] } = {}) =>
-    invoke<OllamaReply>("ollama_generate", {
-      prompt,
-      system: opts.system ?? null,
-      model: opts.model ?? null,
-      images: opts.images ?? null,
-    }),
   validateCloudApiKey: (provider: string, apiKey: string) =>
     invoke<KeyValidationResult>("validate_cloud_api_key", {
       provider,
       apiKey,
-    }),
-  cloudLlmChat: (params: {
-    provider: string;
-    apiKey: string;
-    model?: string;
-    systemPrompt: string;
-    userPrompt: string;
-    imageBase64?: string;
-  }) =>
-    invoke<OllamaReply>("cloud_llm_chat", {
-      provider: params.provider,
-      apiKey: params.apiKey,
-      model: params.model ?? null,
-      systemPrompt: params.systemPrompt,
-      userPrompt: params.userPrompt,
-      imageBase64: params.imageBase64 ?? null,
     }),
   triggerN8nWebhook: (params: {
     webhookUrl?: string;
@@ -126,30 +89,10 @@ export const commands = {
       payload: params.payload ?? null,
       authToken: params.authToken ?? null,
     }),
-  testMcpConnection: (params: {
-    serverUrl: string;
-    authToken?: string;
-    customHeaders?: Record<string, string>;
-  }) =>
-    invoke<McpTestResult>("test_mcp_connection", {
-      serverUrl: params.serverUrl,
-      authToken: params.authToken ?? null,
-      customHeaders: params.customHeaders ?? null,
-    }),
-  callMcpTool: (params: {
-    serverUrl: string;
-    toolName: string;
-    arguments?: Record<string, any>;
-    authToken?: string;
-    customHeaders?: Record<string, string>;
-  }) =>
-    invoke<any>("call_mcp_tool", {
-      serverUrl: params.serverUrl,
-      toolName: params.toolName,
-      arguments: params.arguments ?? null,
-      authToken: params.authToken ?? null,
-      customHeaders: params.customHeaders ?? null,
-    }),
+  testMcpConnection: (params: { serverUrl: string; authToken?: string; customHeaders?: Record<string, string>; type?: string; command?: string; args?: string[] }) =>
+    invoke<McpTestResult>('mcp_list', { config: { type: params.type || 'http', serverUrl: params.serverUrl, authToken: params.authToken, headers: params.customHeaders, command: params.command, args: params.args } }),
+  callMcpTool: (params: { serverUrl: string; toolName: string; arguments?: Record<string, unknown>; authToken?: string; customHeaders?: Record<string, string>; type?: string; command?: string; args?: string[] }) =>
+    invoke<unknown>('mcp_execute', { config: { type: params.type || 'http', serverUrl: params.serverUrl, authToken: params.authToken, headers: params.customHeaders, command: params.command, args: params.args }, tool: params.toolName, arguments: params.arguments || {} }),
   readSystemMcpConfig: () => invoke<McpSystemConfigResult>("read_system_mcp_config"),
   startSandboxVm: () => invoke<string>("start_sandbox_vm"),
   createSandboxCheckpoint: (snapshotName: string) => invoke<string>("create_sandbox_checkpoint", { snapshotName }),
@@ -158,7 +101,6 @@ export const commands = {
   placeVmOnSecondaryScreen: () => invoke<string>("place_vm_on_secondary_screen"),
   requestAdminElevation: () => invoke<string>("request_admin_elevation"),
   getPetInfo: () => invoke<PetInfo>("get_pet_info"),
-  getPetVideoBase64: (clipName: string) => invoke<string>("get_pet_video_base64", { clipName }),
 };
 
 export interface PetInfo {

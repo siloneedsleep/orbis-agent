@@ -1,3 +1,4 @@
+import { preferences } from '@/state/orbisBridge';
 import React, { useState, useEffect } from 'react';
 import { 
   Plug, 
@@ -83,6 +84,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
   // Modal thêm/sửa MCP
   const [formMcpName, setFormMcpName] = useState('');
   const [formMcpUrl, setFormMcpUrl] = useState('');
+  const [formMcpArgs, setFormMcpArgs] = useState('[]');
   const [formMcpToken, setFormMcpToken] = useState('');
   const [formMcpType, setFormMcpType] = useState<'http' | 'sse' | 'stdio'>('http');
 
@@ -112,10 +114,11 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
   );
   const [llmApiKey, setLlmApiKey] = useState(() => {
     const prov = currentLlm.provider === 'ollama' ? (currentLlm.cloudProvider || 'deepseek') : currentLlm.provider;
-    const stored = typeof window !== 'undefined' ? localStorage.getItem(`orbis_${prov}_key`) : null;
+    const stored = typeof window !== 'undefined' ? preferences.getItem(`orbis_${prov}_key`) : null;
     return stored ?? currentLlm.apiKey ?? '';
   });
   const [llmModel, setLlmModel] = useState(currentLlm.model || 'deepseek-chat');
+  const [fallbackEnabled,setFallbackEnabled] = useState(currentLlm.fallbackEnabled ?? false);
   const [llmMaxPower, setLlmMaxPower] = useState<boolean>(currentLlm.maxPower ?? true);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaLoading, setOllamaLoading] = useState(false);
@@ -276,12 +279,13 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
 
   // Test 1 MCP Server
   const handleTestMcpServer = async (server: McpServerConfig) => {
-    if (!server.serverUrl?.trim()) return;
+    if (server.type === 'stdio' ? !server.command?.trim() : !server.serverUrl?.trim()) return;
     setTestingServerId(server.id);
     setMcpNotification(null);
     try {
       const res = await commands.testMcpConnection({
-        serverUrl: server.serverUrl,
+        serverUrl: server.serverUrl || '',
+        type: server.type, command: server.command, args: server.args,
         authToken: server.authToken,
         customHeaders: server.headers,
       });
@@ -363,6 +367,11 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
   const handleSaveMcpModal = async () => {
     if (!formMcpName.trim() || !formMcpUrl.trim()) return;
 
+    let args: string[] = [];
+    if (formMcpType === 'stdio') {
+      try { const parsed: unknown = JSON.parse(formMcpArgs); if (!Array.isArray(parsed) || !parsed.every(arg=>typeof arg==='string')) throw new Error(); args=parsed; }
+      catch { setMcpNotification({type:'error',message:'MCP arguments phải là mảng JSON các chuỗi.'}); return; }
+    }
     const targetId = editingMcpServer ? editingMcpServer.id : `mcp-${Date.now()}`;
     const isStdio = formMcpType === 'stdio';
     let targetServer: McpServerConfig | undefined;
@@ -377,6 +386,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                 name: formMcpName.trim(),
                 serverUrl: isStdio ? undefined : formMcpUrl.trim(),
                 command: isStdio ? formMcpUrl.trim() : undefined,
+                args: isStdio ? args : undefined,
                 authToken: formMcpToken.trim() || undefined,
                 type: formMcpType,
               }
@@ -388,6 +398,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
           name: formMcpName.trim(),
           serverUrl: isStdio ? undefined : formMcpUrl.trim(),
           command: isStdio ? formMcpUrl.trim() : undefined,
+                args: isStdio ? args : undefined,
           authToken: formMcpToken.trim() || undefined,
           type: formMcpType,
           enabled: true,
@@ -403,14 +414,14 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
     setEditingMcpServer(null);
 
     // Tự động kiểm tra server HTTP/SSE vừa lưu theo đúng targetId
-    if (targetServer && targetServer.type !== 'stdio' && targetServer.serverUrl) {
+    if (targetServer) {
       handleTestMcpServer(targetServer);
     }
   };
 
   // Chạy thử 1 MCP Tool trực tiếp
   const handleExecuteToolTest = async () => {
-    if (!activeToolToRun || !selectedMcpServer?.serverUrl) return;
+    if (!activeToolToRun || !selectedMcpServer) return;
     setToolRunning(true);
     setToolRunResult(null);
     try {
@@ -422,7 +433,8 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
       }
 
       const res = await commands.callMcpTool({
-        serverUrl: selectedMcpServer.serverUrl,
+        serverUrl: selectedMcpServer.serverUrl || '',
+        type: selectedMcpServer.type, command: selectedMcpServer.command, args: selectedMcpServer.args,
         toolName: activeToolToRun.name,
         arguments: parsedArgs,
         authToken: selectedMcpServer.authToken,
@@ -469,6 +481,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
       cloudProvider: llmProvider,
       apiKey: !isLocal ? llmApiKey.trim() : undefined,
       maxPower: llmMaxPower,
+      fallbackEnabled,
     };
 
     saveStoredLLMConfig(newConfig);
@@ -664,6 +677,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                     setEditingMcpServer(null);
                     setFormMcpName('');
                     setFormMcpUrl('');
+                    setFormMcpArgs('[]');
                     setFormMcpToken('');
                     setFormMcpType('http');
                     setShowAddMcpModal(true);
@@ -768,7 +782,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                         <button
                           type="button"
                           onClick={() => handleTestMcpServer(server)}
-                          disabled={isTesting || !server.enabled || server.type === 'stdio' || !server.serverUrl}
+                          disabled={isTesting || !server.enabled || (server.type === 'stdio' ? !server.command : !server.serverUrl)}
                           className="flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-200 transition disabled:opacity-50"
                         >
                           <RefreshCw className={`h-3 w-3 text-cyan-400 ${isTesting ? 'animate-spin' : ''}`} />
@@ -793,6 +807,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                             setEditingMcpServer(server);
                             setFormMcpName(server.name);
                             setFormMcpUrl(server.serverUrl || server.command || '');
+                            setFormMcpArgs(JSON.stringify(server.args || []));
                             setFormMcpToken(server.authToken || '');
                             setFormMcpType(server.type);
                             setShowAddMcpModal(true);
@@ -928,7 +943,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                   onClick={() => {
                     setLlmType('api');
                     setLlmModel(DEFAULT_CLOUD_MODELS[llmProvider]);
-                    const stored = typeof window !== 'undefined' ? localStorage.getItem(`orbis_${llmProvider}_key`) : null;
+                    const stored = typeof window !== 'undefined' ? preferences.getItem(`orbis_${llmProvider}_key`) : null;
                     setLlmApiKey(stored || '');
                   }}
                   className={`rounded-2xl border p-4 text-left transition ${
@@ -955,7 +970,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                             setLlmProvider(p);
                             setLlmModel(DEFAULT_CLOUD_MODELS[p]);
                             setLlmKeyResult(null);
-                            const stored = typeof window !== 'undefined' ? localStorage.getItem(`orbis_${p}_key`) : null;
+                            const stored = typeof window !== 'undefined' ? preferences.getItem(`orbis_${p}_key`) : null;
                             setLlmApiKey(stored || '');
                           }}
                           className={`rounded-xl border py-2 text-xs font-medium capitalize transition ${
@@ -1031,7 +1046,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                         onChange={(e) => setLlmModel(e.target.value)}
                         className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-xs text-white focus:border-cyan-400 focus:outline-none"
                       >
-                        <option value="auto">Tự động ({ollamaStatus.largest || 'Model lớn nhất'})</option>
+                        <option value="auto">Tự động theo RAM · ưu tiên Vision</option>
                         {ollamaStatus.models.map((m) => (
                           <option key={m.name} value={m.name}>
                             {m.name} ({(m.sizeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB)
@@ -1066,6 +1081,7 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                 </div>
               )}
 
+              {llmType === 'local' && <label className="flex items-start gap-3 rounded-xl border border-zinc-800 p-4 text-xs text-zinc-400"><input type="checkbox" checked={fallbackEnabled} onChange={event=>setFallbackEnabled(event.target.checked)} /><span>Cho phép chuyển sang cloud đã lưu khi Ollama lỗi. Ảnh màn hình và ngữ cảnh tác vụ sẽ được gửi tới nhà cung cấp cloud đã chọn.</span></label>}
               <div className="flex justify-end pt-2">
                 <button
                   type="button"
@@ -1472,13 +1488,14 @@ export const UnifiedSettingsView: React.FC<UnifiedSettingsViewProps> = ({
                 </label>
                 <input
                   type="text"
-                  placeholder={formMcpType === 'stdio' ? 'npx -y @modelcontextprotocol/server-filesystem ...' : 'https://.../mcp-server/http'}
+                  placeholder={formMcpType === 'stdio' ? 'node.exe hoặc đường dẫn chương trình' : 'https://.../mcp-server/http'}
                   value={formMcpUrl}
                   onChange={(e) => setFormMcpUrl(e.target.value)}
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-mono text-white focus:border-emerald-400 focus:outline-none"
                 />
               </div>
 
+              {formMcpType === 'stdio' && <label className="block space-y-1 text-xs text-zinc-400">Arguments (JSON array)<input aria-label="MCP process arguments" value={formMcpArgs} onChange={event=>setFormMcpArgs(event.target.value)} placeholder={'["server.js"]'} className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-white" /></label>}
               <div className="space-y-1">
                 <label className="text-xs text-zinc-400">Authorization Token (Bearer / JWT)</label>
                 <input

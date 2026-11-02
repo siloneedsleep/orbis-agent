@@ -11,11 +11,17 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
-    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("dashboard.html".into()))
+    let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("dashboard.html".into()))
         .title("Orbis Agent - Workspace")
         .inner_size(1180.0, 760.0)
         .min_inner_size(840.0, 580.0)
-        .center()
-        .build()?;
+        .center();
+    #[cfg(debug_assertions)]
+    let builder = if let Some(directory) = std::env::var_os("ORBIS_DATA_DIR") {
+        builder.data_directory(std::path::PathBuf::from(directory).join("webview"))
+    } else {
+        builder
+    };
+    builder.build()?;
     Ok(())
 }

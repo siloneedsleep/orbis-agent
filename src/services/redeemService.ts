@@ -1,3 +1,4 @@
+import { preferences } from '@/state/orbisBridge';
 ﻿import { 
   CatSettings, 
   CatSkill, 
@@ -71,7 +72,7 @@ const DYNAMIC_CODES_KEY = 'orbis_dynamic_redeem_codes';
 
 export function getDynamicCodes(): RedeemReward[] {
   try {
-    const raw = localStorage.getItem(DYNAMIC_CODES_KEY);
+    const raw = preferences.getItem(DYNAMIC_CODES_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -79,7 +80,7 @@ export function getDynamicCodes(): RedeemReward[] {
 }
 
 export function saveDynamicCodes(codes: RedeemReward[]): void {
-  localStorage.setItem(DYNAMIC_CODES_KEY, JSON.stringify(codes));
+  preferences.setItem(DYNAMIC_CODES_KEY, JSON.stringify(codes));
 }
 
 export async function redeemCode(inputCode: string): Promise<RedeemResult> {

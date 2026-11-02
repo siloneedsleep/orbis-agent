@@ -44,9 +44,10 @@ import { OnboardingModal } from "@/components/OnboardingModal";
 import { SettingsModal } from "@/components/SettingsModal";
 import { UnifiedSettingsView } from "@/components/Settings/UnifiedSettingsView";
 import { WorkstreamCard } from "@/components/WorkstreamCard";
-import { TeachCatView } from "@/components/TeachCat/TeachCatView";
-import { AgentBrain, AgentAction } from "@/services/agentLoop";
-import { planStepWithHybridFallback } from "@/services/orchestrator";
+import { SkillStudio } from '@/components/SkillStudio/SkillStudio';
+import { useOrbisStream } from '@/state/useOrbisStream';
+import { startAgent, stopAgent, approveAction, frameUrl, clearWorkstream, preferences } from '@/state/orbisBridge';
+import { DagView } from '@/components/WorkstreamDag';
 
 interface PolicyOption {
   id: SandboxExecutionPolicy;
@@ -142,16 +143,15 @@ export function DashboardApp() {
   const [layout, setLayout] = useState<OverlayLayout | null>(null);
 
   // Workstream and Agent Loop
-  const [workstream, setWorkstream] = useState<WorkstreamItem[]>([]);
+  const stream = useOrbisStream();
+  const workstream = stream.workstream;
   const [inputPrompt, setInputPrompt] = useState<string>('');
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [currentStage, setCurrentStage] = useState<'analyzing' | 'planning' | 'executing' | 'verifying' | null>(null);
+  const isRunning = ['thinking', 'executing', 'awaiting_approval'].includes(stream.status);
+  const currentStage = stream.stage;
   const [lastScreenshot, setLastScreenshot] = useState<string | null>(null);
   const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
 
   const workstreamEndRef = useRef<HTMLDivElement>(null);
-  const isRunningRef = useRef<boolean>(false);
-  const pendingApprovalResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map());
   const policyMenuRef = useRef<HTMLDivElement>(null);
 
   // Đóng menu policy khi click ra ngoài
@@ -234,16 +234,10 @@ export function DashboardApp() {
     setConsoleLogs(prev => [`[${time}] ${msg}`, ...prev.slice(0, 100)]);
   };
 
-  // Add workstream item helper
   const addItem = (item: Omit<WorkstreamItem, 'id' | 'timestamp'>) => {
-    const newItem: WorkstreamItem = {
-      ...item,
-      id: Math.random().toString(36).substring(7),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-    };
-    setWorkstream(prev => [...prev, newItem]);
-    return newItem.id;
+    addLog(item.content || 'Đã cập nhật môi trường Sandbox.');
   };
+  useEffect(() => { if (stream.lastFrame) setLastScreenshot(frameUrl(stream.lastFrame)); }, [stream.lastFrame]);
 
   // Chọn chế độ thực thi Sandbox (Request Review / Default / Auto / Turbo)
   const handleSelectPolicy = (nextPolicy: SandboxExecutionPolicy) => {
@@ -292,7 +286,9 @@ export function DashboardApp() {
   const handleCreateCheckpoint = async () => {
     setSandboxBusy(true);
     try {
-      const msg = await commands.createSandboxCheckpoint("orbis_checkpoint");
+      const name = `manual_${Date.now()}`;
+      const msg = await commands.createSandboxCheckpoint(name);
+      preferences.setItem("orbis_last_checkpoint", name);
       addLog(msg);
       addItem({
         type: 'assistant',
@@ -308,7 +304,8 @@ export function DashboardApp() {
   const handleRestoreCheckpoint = async () => {
     setSandboxBusy(true);
     try {
-      const msg = await commands.rollbackSandboxCheckpoint("orbis_checkpoint");
+      const name = preferences.getItem("orbis_last_checkpoint") || "orbis_checkpoint";
+      const msg = await commands.rollbackSandboxCheckpoint(name);
       addLog(msg);
       addItem({
         type: 'assistant',
@@ -322,267 +319,19 @@ export function DashboardApp() {
   };
 
   // Xử lý khi người dùng bấm Chấp thuận / Từ chối trên Action Card
-  const handleConfirmAction = (cardId: string, approved: boolean) => {
-    const resolver = pendingApprovalResolvers.current.get(cardId);
-    if (resolver) {
-      pendingApprovalResolvers.current.delete(cardId);
-      resolver(approved);
-    }
+  const handleConfirmAction = (id: string, approved: boolean) => {
+    approveAction(id, approved).catch(error => addLog(String(error)));
   };
-
-  // Kiểm tra lệnh có nhạy cảm hay không (dùng cho chế độ Default)
-  const isSensitiveAction = (action: AgentAction): boolean => {
-    if (action.type === 'sandbox_exec') {
-      return /rm\b|del\b|remove-item|reg\b|stop-process|taskkill|format\b|netsh|invoke-webrequest|curl|wget|shutdown|restart|rd\b|rmdir/i.test(
-        action.command
-      );
-    }
-    return false;
-  };
-
-  // Emergency Kill Switch
   const handleEmergencyStop = () => {
-    isRunningRef.current = false;
-    setIsRunning(false);
-    setCurrentStage(null);
-    // Hủy toàn bộ các lệnh đang chờ phê duyệt
-    pendingApprovalResolvers.current.forEach((resolve) => resolve(false));
-    pendingApprovalResolvers.current.clear();
-
-    events.emitPetState({ state: 'wake', message: 'Đã dừng khẩn cấp!' }).catch(() => {});
-    addLog("EMERGENCY KILL SWITCH ACTIVATED: Đã dừng toàn bộ vòng lặp Agent!");
-    addItem({
-      type: 'assistant',
-      content: '⚠️ Đã kích hoạt Dừng khẩn cấp! Toàn bộ thao tác chuột, phím và lập lịch đã được ngắt an toàn.',
-    });
+    stopAgent().catch(error => addLog(String(error)));
   };
-
-  // Run Agent Task Loop
   const handleStartTask = async () => {
-    const text = inputPrompt.trim();
-    if (!text || isRunningRef.current) return;
-
-    // Kiểm tra lại quyền Admin nếu đang chọn Turbo
-    let activePolicy = sandboxPolicy;
-    if (activePolicy === 'turbo' && !sys?.isAdmin) {
-      setShowAdminRequiredModal(true);
-      return;
-    }
-
-    setInputPrompt('');
-    isRunningRef.current = true;
-    setIsRunning(true);
-    addLog(`Bắt đầu tác vụ: "${text}" (Policy: ${activePolicy.toUpperCase()})`);
-
-    // Add user message to stream
-    addItem({
-      type: 'user',
-      content: text,
-    });
-
-    const brain = new AgentBrain();
-    let loopCount = 0;
-    const maxLoops = mode === 'chat' ? 1 : 15;
-    const actionHistory: string[] = [];
-
+    const goal = inputPrompt.trim();
+    if (!goal || isRunning) return;
     try {
-      while (isRunningRef.current && loopCount < maxLoops) {
-        loopCount++;
-
-        // Phase 1: Analyzing Screen (Bỏ qua chụp màn hình nếu đang ở chế độ Chat thông thường để phản hồi nhanh hơn)
-        let screenData: string | undefined = undefined;
-        const needsScreen = mode !== 'chat' || /màn hình|chụp|ảnh|screen|xem/i.test(text);
-
-        if (needsScreen) {
-          setCurrentStage('analyzing');
-          events.emitPetState({ state: 'thinking', message: 'Em đang quan sát màn hình...' }).catch(() => {});
-          addLog(`[Vòng ${loopCount}/${maxLoops}] Giai đoạn 1: Phân tích màn hình...`);
-          try {
-            const activeLayout = layout || await commands.getOverlayLayout();
-            if (!layout && activeLayout) setLayout(activeLayout);
-            if (activeLayout && activeLayout.monitors.length > 0) {
-              const p = activeLayout.monitors.find(m => m.primary) || activeLayout.monitors[0];
-              screenData = await commands.captureScreenRegion(
-                activeLayout.originX + p.x,
-                activeLayout.originY + p.y,
-                p.width,
-                p.height
-              );
-              setLastScreenshot(screenData);
-            }
-          } catch (captureErr) {
-            addLog(`Không chụp được màn hình: ${captureErr}`);
-          }
-        }
-
-        // Phase 2: Planning Move (Reasoning with Hybrid Fallback)
-        setCurrentStage('planning');
-        events.emitPetState({ state: 'thinking', message: 'Em đang suy nghĩ câu trả lời...' }).catch(() => {});
-        const execMode = mode === 'settings' ? 'computer_use' : mode;
-        const plan = await planStepWithHybridFallback(brain, text, screenData, execMode, actionHistory);
-        if (plan.usedFallback) {
-          addLog(`[HybridFallback] Đã tự động chuyển sang phương án LLM dự phòng thành công.`);
-        }
-
-        // Hiển thị Chain of Thought (nếu khác với nội dung trả lời cuối)
-        if (plan.thought && plan.thought !== plan.message && plan.thought !== "Đang xử lý yêu cầu...") {
-          addItem({
-            type: 'thinking',
-            content: plan.thought,
-          });
-        }
-
-        // Phase 3: Executing Action
-        setCurrentStage('executing');
-        addLog(`[Vòng ${loopCount}] Giai đoạn 3: Kết quả suy luận [${plan.action.type}]`);
-
-        if (mode === 'chat' || plan.action.type === 'done') {
-          events.emitPetState({ state: 'done', message: 'Tác vụ đã hoàn thành xuất sắc! ✨' }).catch(() => {});
-          const updatedCat = addCatExp(15);
-          setCatSettings(updatedCat);
-          addItem({
-            type: 'assistant',
-            content: plan.message || plan.thought || 'Tác vụ đã hoàn thành.',
-          });
-          break;
-        }
-
-        // Kiểm tra chính sách phê duyệt theo 4 chế độ Sandbox Policy:
-        // - request_review: Mọi lệnh đều cần người dùng bấm Chấp thuận
-        // - default: Chỉ hỏi trước các thao tác nhạy cảm
-        // - auto: AI tự động quyết định (tự tạo checkpoint nếu lệnh nhạy cảm)
-        // - turbo: Chạy thẳng toàn bộ không giới hạn (yêu cầu Admin)
-        const needsApproval =
-          activePolicy === 'request_review' ||
-          (activePolicy === 'default' && isSensitiveAction(plan.action));
-
-        let toolName: any = 'ClickButton';
-        if (plan.action.type === 'mouse_move') toolName = 'MoveMouse';
-        if (plan.action.type === 'mouse_click') toolName = 'ClickButton';
-        if (plan.action.type === 'keyboard_type') toolName = 'SendKeystroke';
-        if (plan.action.type === 'sandbox_exec') toolName = 'SandboxExec';
-        if (plan.action.type === 'n8n_execute') toolName = 'N8nTrigger';
-        if (plan.action.type === 'mcp_call') toolName = 'McpToolCall';
-
-        const actionCardId = addItem({
-          type: 'action',
-          actionData: {
-            tool: toolName,
-            params: plan.action,
-            status: needsApproval ? 'pending_approval' : 'running',
-            policyMode: activePolicy,
-          }
-        });
-
-        if (needsApproval) {
-          const rawPronoun = profile?.pronoun || 'anh';
-          const capPronoun = rawPronoun.charAt(0).toUpperCase() + rawPronoun.slice(1);
-          addLog(`[Policy: ${activePolicy}] Đang chờ người dùng phê duyệt hành động [${plan.action.type}]...`);
-          events.emitPetState({ state: 'wake', message: `${capPronoun} ơi, duyệt lệnh giúp em nhé!` }).catch(() => {});
-
-          const approved = await new Promise<boolean>((resolve) => {
-            pendingApprovalResolvers.current.set(actionCardId, resolve);
-          });
-
-          if (!approved) {
-            setWorkstream(prev => prev.map(it => {
-              if (it.id === actionCardId && it.actionData) {
-                return {
-                  ...it,
-                  actionData: {
-                    ...it.actionData,
-                    status: 'rejected',
-                    result: 'Người dùng đã từ chối thực thi lệnh này.',
-                  }
-                };
-              }
-              return it;
-            }));
-            addLog(`Đã từ chối thực thi hành động [${plan.action.type}].`);
-            break;
-          }
-
-          // Chuyển trạng thái sang running sau khi được duyệt
-          setWorkstream(prev => prev.map(it => {
-            if (it.id === actionCardId && it.actionData) {
-              return {
-                ...it,
-                actionData: {
-                  ...it.actionData,
-                  status: 'running',
-                }
-              };
-            }
-            return it;
-          }));
-        } else if (activePolicy === 'auto' && isSensitiveAction(plan.action)) {
-          // Chế độ Auto (Preview): Tự động tạo checkpoint trước khi thực thi thao tác nhạy cảm
-          addLog("[Auto Policy] Tự động lưu Checkpoint Sandbox trước khi chạy lệnh nhạy cảm...");
-          await commands.createSandboxCheckpoint("auto_safety_guard").catch(() => {});
-        }
-
-        events.emitPetState({ state: 'executing', message: `Em đang thực hiện ${plan.action.type}...` }).catch(() => {});
-
-        const startT = Date.now();
-        let execResult: any;
-        try {
-          execResult = await brain.executeAction(plan.action);
-        } catch (actionErr: any) {
-          const duration = Date.now() - startT;
-          const actionErrMsg = actionErr?.message || String(actionErr);
-          setWorkstream(prev => prev.map(it => {
-            if (it.id === actionCardId && it.actionData) {
-              return {
-                ...it,
-                actionData: {
-                  ...it.actionData,
-                  status: 'error',
-                  result: actionErrMsg,
-                  durationMs: duration,
-                }
-              };
-            }
-            return it;
-          }));
-          throw actionErr;
-        }
-        const duration = Date.now() - startT;
-        actionHistory.push(`${plan.action.type}: ${JSON.stringify(plan.action)} -> ${String(execResult).slice(0, 200)}`);
-
-        // Cập nhật card thành công
-        setWorkstream(prev => prev.map(it => {
-          if (it.id === actionCardId && it.actionData) {
-            return {
-              ...it,
-              actionData: {
-                ...it.actionData,
-                status: 'success',
-                result: execResult,
-                durationMs: duration
-              }
-            };
-          }
-          return it;
-        }));
-
-        // Phase 4: Verifying
-        setCurrentStage('verifying');
-        addLog(`[Vòng ${loopCount}] Giai đoạn 4: Kiểm tra kết quả`);
-        await new Promise(r => setTimeout(r, 600));
-      }
-    } catch (err: any) {
-      const errMsg = err?.message || String(err);
-      addLog(`Lỗi thực thi vòng lặp: ${errMsg}`);
-      addItem({
-        type: 'assistant',
-        content: `❌ Gặp lỗi trong quá trình xử lý: ${errMsg}`,
-      });
-    } finally {
-      isRunningRef.current = false;
-      setIsRunning(false);
-      setCurrentStage(null);
-      addLog("Kết thúc tác vụ.");
-    }
+      await startAgent(goal, mode === 'sandbox' ? 'sandbox' : mode === 'chat' ? 'chat' : 'computer_use');
+      setInputPrompt('');
+    } catch (error) { addLog(String(error)); }
   };
 
   // Chụp ảnh thủ công
@@ -598,7 +347,7 @@ export function DashboardApp() {
           p.width,
           p.height
         );
-        setLastScreenshot(screen);
+        setLastScreenshot(frameUrl(screen));
         addLog("Đã chụp màn hình thủ công.");
         setInspectorTab('screen');
       }
@@ -611,6 +360,7 @@ export function DashboardApp() {
 
   return (
     <div className="flex h-screen w-screen flex-col bg-zinc-950 font-sans text-zinc-100 antialiased overflow-hidden select-none">
+      {stream.bridgeError && <div role="alert" className="bg-red-950 p-3 text-sm text-red-200">{stream.bridgeError}</div>}
       {/* Onboarding Modal */}
       {showOnboarding && (
         <OnboardingModal
@@ -690,7 +440,7 @@ export function DashboardApp() {
               <span className="text-[10px] font-mono text-cyan-400">· {catSettings.name}</span>
             </div>
             <span className="text-[10px] font-mono text-zinc-500 bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-700/60">
-              v0.2.0
+              v1.0.0
             </span>
           </div>
 
@@ -767,7 +517,7 @@ export function DashboardApp() {
           <button
             type="button"
             onClick={() => {
-              setWorkstream([]);
+              clearWorkstream().catch(error => addLog(String(error)));
               addLog("Khởi tạo phiên làm việc mới.");
             }}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 bg-zinc-800/40 py-2.5 text-xs font-semibold text-zinc-200 hover:border-cyan-500/60 hover:bg-cyan-500/10 hover:text-cyan-300 transition"
@@ -786,7 +536,7 @@ export function DashboardApp() {
                 { id: 'computer_use', label: 'Computer-Use (OS)', icon: MousePointer, desc: 'Tự động chuột & bàn phím' },
                 { id: 'sandbox', label: 'Truy cập Sandbox', icon: ShieldAlert, desc: 'Môi trường thực thi cô lập' },
                 { id: 'chat', label: 'Chat Assistant', icon: Bot, desc: 'Trò chuyện không can thiệp OS' },
-                { id: 'teach_cat', label: 'Huấn luyện Mèo', icon: GraduationCap, desc: 'Dạy kỹ năng & thói quen' },
+                { id: 'teach_cat', label: 'Skill Studio', icon: GraduationCap, desc: 'Dạy kỹ năng & thói quen' },
                 { id: 'settings', label: 'Cài đặt hệ thống', icon: SettingsIcon, desc: 'Connect MCP, LLM, Bảo mật' },
               ].map((m) => {
                 const Icon = m.icon;
@@ -911,7 +661,7 @@ export function DashboardApp() {
           {mode === 'settings' ? (
             <UnifiedSettingsView isAdmin={sys?.isAdmin} onClose={() => setMode('computer_use')} />
           ) : mode === 'teach_cat' ? (
-            <TeachCatView onSettingsChange={(s) => setCatSettings(s)} />
+            <SkillStudio />
           ) : (
             <>
               {/* Thanh điều khiển Sandbox chuyên biệt khi đang ở chế độ Truy cập Sandbox */}

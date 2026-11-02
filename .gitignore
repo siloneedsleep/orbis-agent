@@ -7,3 +7,4 @@ src-tauri/target
 .env.*
 *.local
 generated-codes.txt
+.orbis-test-data/

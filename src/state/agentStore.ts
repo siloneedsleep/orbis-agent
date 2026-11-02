@@ -1,3 +1,4 @@
+import { preferences, subscribePreferences } from './orbisBridge';
 export interface UserProfile {
   name: string;
   gender: 'male' | 'female' | 'other';
@@ -14,6 +15,7 @@ export interface LLMConfig {
   cloudProvider?: 'deepseek' | 'gemini' | 'openai' | 'claude';
   apiKey?: string;
   maxPower?: boolean;
+  fallbackEnabled?: boolean;
 }
 
 export type SandboxExecutionPolicy = 'request_review' | 'default' | 'auto' | 'turbo';
@@ -22,7 +24,7 @@ const SANDBOX_POLICY_KEY = 'orbis_sandbox_policy';
 
 export function getStoredSandboxPolicy(): SandboxExecutionPolicy {
   try {
-    const raw = localStorage.getItem(SANDBOX_POLICY_KEY);
+    const raw = preferences.getItem(SANDBOX_POLICY_KEY);
     if (raw === 'request_review' || raw === 'default' || raw === 'auto' || raw === 'turbo') {
       return raw;
     }
@@ -34,7 +36,7 @@ export function getStoredSandboxPolicy(): SandboxExecutionPolicy {
 
 export function saveStoredSandboxPolicy(policy: SandboxExecutionPolicy): void {
   try {
-    localStorage.setItem(SANDBOX_POLICY_KEY, policy);
+    preferences.setItem(SANDBOX_POLICY_KEY, policy);
     storeListeners.forEach((listener) => listener());
   } catch {
     // ignore
@@ -50,14 +52,14 @@ export interface N8nConfig {
 const N8N_KEY = 'orbis_n8n_config';
 // Không bao giờ hardcode token trong mã nguồn (repo public). Webhook orbis-bridge không yêu cầu auth.
 export const DEFAULT_N8N_CONFIG: N8nConfig = {
-  enabled: true,
-  webhookUrl: 'https://siloneedsleep.app.n8n.cloud/webhook/orbis-bridge',
+  enabled: false,
+  webhookUrl: '',
   apiKey: '',
 };
 
 export function getStoredN8nConfig(): N8nConfig {
   try {
-    const raw = localStorage.getItem(N8N_KEY);
+    const raw = preferences.getItem(N8N_KEY);
     if (!raw) return DEFAULT_N8N_CONFIG;
     return { ...DEFAULT_N8N_CONFIG, ...JSON.parse(raw) };
   } catch {
@@ -67,7 +69,7 @@ export function getStoredN8nConfig(): N8nConfig {
 
 export function saveStoredN8nConfig(cfg: N8nConfig): void {
   try {
-    localStorage.setItem(N8N_KEY, JSON.stringify(cfg));
+    preferences.setItem(N8N_KEY, JSON.stringify(cfg));
     storeListeners.forEach((listener) => listener());
   } catch {
     // ignore
@@ -81,6 +83,7 @@ export interface McpServerConfig {
   serverUrl?: string;
   authToken?: string;
   command?: string;
+  args?: string[];
   headers?: Record<string, string>;
   enabled: boolean;
   status?: 'connected' | 'disconnected' | 'testing' | 'error';
@@ -96,20 +99,11 @@ export interface McpServerConfig {
 
 const MCP_SERVERS_KEY = 'orbis_mcp_servers';
 // Token để trống: backend Rust tự lấy Authorization từ ~/.gemini/config/mcp_config.json (không lưu secret trong mã nguồn).
-export const DEFAULT_MCP_SERVERS: McpServerConfig[] = [
-  {
-    id: 'mcp-n8n',
-    name: 'n8n Cloud MCP Server',
-    type: 'http',
-    serverUrl: 'https://siloneedsleep.app.n8n.cloud/mcp-server/http',
-    authToken: '',
-    enabled: true,
-  }
-];
+export const DEFAULT_MCP_SERVERS: McpServerConfig[] = [];
 
 export function getStoredMcpServers(): McpServerConfig[] {
   try {
-    const raw = localStorage.getItem(MCP_SERVERS_KEY);
+    const raw = preferences.getItem(MCP_SERVERS_KEY);
     if (!raw) return DEFAULT_MCP_SERVERS;
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : DEFAULT_MCP_SERVERS;
@@ -120,7 +114,7 @@ export function getStoredMcpServers(): McpServerConfig[] {
 
 export function saveStoredMcpServers(servers: McpServerConfig[]): void {
   try {
-    localStorage.setItem(MCP_SERVERS_KEY, JSON.stringify(servers));
+    preferences.setItem(MCP_SERVERS_KEY, JSON.stringify(servers));
     storeListeners.forEach((listener) => listener());
   } catch {
     // ignore
@@ -143,7 +137,7 @@ export interface WorkstreamItem {
   timestamp: string;
   actionData?: ActionPayload;
   stage?: 'analyzing' | 'planning' | 'executing' | 'verifying';
-  screenshot?: string; // base64
+  screenshot?: string; // frame ID, resolved through the orbis protocol
 }
 
 export interface CatSkill {
@@ -169,6 +163,7 @@ export interface CatSettings {
   redeemedCodes: string[]; // Danh sách mã redeem đã dùng
   isCreator?: boolean; // Quyền tạo & quản lý skill
   speechBubbleEnabled: boolean;
+  stealthMode?: boolean;
   taughtSkills: CatSkill[];
 }
 
@@ -228,10 +223,10 @@ export const DEFAULT_CAT_SETTINGS: CatSettings = {
 
 export function isCreatorDevice(): boolean {
   try {
-    const key = localStorage.getItem(CREATOR_KEY);
+    const key = preferences.getItem(CREATOR_KEY);
     if (!key) {
       // Mặc định khởi tạo creator key trên máy phát triển này
-      localStorage.setItem(CREATOR_KEY, CREATOR_MASTER_SIGN);
+      preferences.setItem(CREATOR_KEY, CREATOR_MASTER_SIGN);
       return true;
     }
     return key === CREATOR_MASTER_SIGN;
@@ -242,7 +237,7 @@ export function isCreatorDevice(): boolean {
 
 export function getStoredCatSettings(): CatSettings {
   try {
-    const raw = localStorage.getItem(CAT_KEY);
+    const raw = preferences.getItem(CAT_KEY);
     if (!raw) return DEFAULT_CAT_SETTINGS;
     const parsed = JSON.parse(raw);
     return {
@@ -259,7 +254,7 @@ export function getStoredCatSettings(): CatSettings {
 }
 
 export function saveStoredCatSettings(settings: CatSettings): void {
-  localStorage.setItem(CAT_KEY, JSON.stringify(settings));
+  preferences.setItem(CAT_KEY, JSON.stringify(settings));
   storeListeners.forEach((listener) => listener());
 }
 
@@ -378,8 +373,8 @@ function normalizeLLMConfig(rawConfig: Partial<LLMConfig> | null): LLMConfig | n
   const model = isLocal ? localModel : cloudModel;
 
   let apiKey: string | undefined = undefined;
-  if (typeof window !== 'undefined' && window.localStorage) {
-    const storedForProvider = localStorage.getItem(`orbis_${cloudProvider}_key`);
+  if (typeof window !== 'undefined' && preferences) {
+    const storedForProvider = preferences.getItem(`orbis_${cloudProvider}_key`);
     if (storedForProvider !== null) {
       apiKey = storedForProvider.trim() || undefined;
     } else {
@@ -399,12 +394,13 @@ function normalizeLLMConfig(rawConfig: Partial<LLMConfig> | null): LLMConfig | n
     cloudProvider,
     apiKey,
     maxPower: rawConfig.maxPower ?? true,
+    fallbackEnabled: rawConfig.fallbackEnabled ?? false,
   };
 }
 
 export function getStoredProfile(): UserProfile | null {
   try {
-    const raw = localStorage.getItem(PROFILE_KEY);
+    const raw = preferences.getItem(PROFILE_KEY);
     cachedProfile = raw ? JSON.parse(raw) : null;
     return cachedProfile;
   } catch {
@@ -414,13 +410,13 @@ export function getStoredProfile(): UserProfile | null {
 
 export function saveStoredProfile(profile: UserProfile): void {
   cachedProfile = profile;
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  preferences.setItem(PROFILE_KEY, JSON.stringify(profile));
   storeListeners.forEach((listener) => listener());
 }
 
 export function getStoredLLMConfig(): LLMConfig | null {
   try {
-    const raw = localStorage.getItem(LLM_KEY);
+    const raw = preferences.getItem(LLM_KEY);
     if (!raw) return cachedLLMConfig;
     const parsed = JSON.parse(raw);
     cachedLLMConfig = normalizeLLMConfig(parsed);
@@ -441,24 +437,24 @@ export function saveStoredLLMConfig(config: LLMConfig): void {
 
   const defaultCloudModel = DEFAULT_CLOUD_MODEL_BY_PROVIDER[cloudProvider] || 'deepseek-chat';
   const storedProviderKey =
-    typeof window !== 'undefined' && window.localStorage
-      ? localStorage.getItem(`orbis_${cloudProvider}_key`)?.trim() || undefined
+    typeof window !== 'undefined' && preferences
+      ? preferences.getItem(`orbis_${cloudProvider}_key`)?.trim() || undefined
       : undefined;
 
   let resolvedApiKey: string | undefined;
   if (!isLocal && typeof config.apiKey === 'string') {
     resolvedApiKey = config.apiKey.trim() || undefined;
-    if (typeof window !== 'undefined' && window.localStorage) {
+    if (typeof window !== 'undefined' && preferences) {
       if (resolvedApiKey) {
-        localStorage.setItem(`orbis_${cloudProvider}_key`, resolvedApiKey);
+        preferences.setItem(`orbis_${cloudProvider}_key`, resolvedApiKey);
       } else {
-        localStorage.removeItem(`orbis_${cloudProvider}_key`);
+        preferences.removeItem(`orbis_${cloudProvider}_key`);
       }
     }
   } else if (typeof config.apiKey === 'string' && config.apiKey.trim()) {
     resolvedApiKey = config.apiKey.trim();
-    if (typeof window !== 'undefined' && window.localStorage) {
-      localStorage.setItem(`orbis_${cloudProvider}_key`, resolvedApiKey);
+    if (typeof window !== 'undefined' && preferences) {
+      preferences.setItem(`orbis_${cloudProvider}_key`, resolvedApiKey);
     }
   } else {
     resolvedApiKey = storedProviderKey || (prev?.cloudProvider === cloudProvider ? prev?.apiKey : undefined);
@@ -474,10 +470,11 @@ export function saveStoredLLMConfig(config: LLMConfig): void {
     cloudProvider,
     apiKey: resolvedApiKey,
     maxPower: config.maxPower ?? prev?.maxPower ?? true,
+    fallbackEnabled: config.fallbackEnabled ?? prev?.fallbackEnabled ?? false,
   };
 
   cachedLLMConfig = merged;
-  localStorage.setItem(LLM_KEY, JSON.stringify(merged));
+  preferences.setItem(LLM_KEY, JSON.stringify(merged));
   storeListeners.forEach((listener) => listener());
 }
 
@@ -488,25 +485,11 @@ export function subscribeAgentStore(listener: StoreChangeListener): () => void {
   };
 }
 
-// Đồng bộ tự động cấu hình LLM & Profile giữa 2 cửa sổ WebView (dashboard.html <-> overlay.html)
-if (typeof window !== 'undefined') {
+subscribePreferences(() => {
   cachedProfile = getStoredProfile();
   cachedLLMConfig = getStoredLLMConfig();
-
-  window.addEventListener('storage', (event: StorageEvent) => {
-    if (
-      !event.key ||
-      event.key === LLM_KEY ||
-      event.key === PROFILE_KEY ||
-      event.key === CAT_KEY ||
-      event.key.startsWith('orbis_')
-    ) {
-      cachedProfile = getStoredProfile();
-      cachedLLMConfig = getStoredLLMConfig();
-      storeListeners.forEach((listener) => listener());
-    }
-  });
-}
+  storeListeners.forEach(listener => listener());
+});
 
 export function buildSystemPrompt(profile?: UserProfile | null, catSettings?: CatSettings | null): string {
   const userName = profile?.name?.trim() || "Người dùng";

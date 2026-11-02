@@ -1,50 +1,123 @@
-use xcap::Monitor;
-use base64::{engine::general_purpose, Engine as _};
+use dashmap::DashMap;
 use image::{imageops, DynamicImage, ImageFormat};
-use std::io::Cursor;
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::VecDeque,
+    io::Cursor,
+    sync::{Arc, Mutex},
+};
+use uuid::Uuid;
+use xcap::Monitor;
 
-#[tauri::command(async)]
-pub fn capture_screen_region(x: i32, y: i32, width: i32, height: i32) -> Result<String, String> {
-    let monitors = Monitor::all().map_err(|e| e.to_string())?;
-    if monitors.is_empty() {
-        return Err("No monitor found".to_string());
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameRef {
+    pub frame_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub origin_x: i32,
+    pub origin_y: i32,
+    pub monitor_scale: f32,
+}
+
+/// Five encoded frames; a reader can pin an Arc across eviction.
+#[derive(Default)]
+pub struct FrameCache {
+    frames: DashMap<String, Arc<Vec<u8>>>,
+    order: Mutex<VecDeque<String>>,
+}
+
+impl FrameCache {
+    pub fn insert(&self, bytes: Vec<u8>) -> String {
+        let id = format!("frm_{}", Uuid::new_v4());
+        let mut order = self.order.lock().unwrap();
+        self.frames.insert(id.clone(), Arc::new(bytes));
+        order.push_back(id.clone());
+        while order.len() > 5 {
+            if let Some(old) = order.pop_front() {
+                self.frames.remove(&old);
+            }
+        }
+        id
     }
+    pub fn get(&self, id: &str) -> Option<Arc<Vec<u8>>> {
+        self.frames.get(id).map(|v| Arc::clone(v.value()))
+    }
+}
 
-    // Tìm monitor chứa điểm (x, y); nếu không tìm thấy lấy monitor đầu tiên
+pub struct CapturedFrame {
+    pub image: DynamicImage,
+    pub reference: FrameRef,
+}
+
+pub fn capture(x: i32, y: i32, width: i32, height: i32) -> Result<CapturedFrame, String> {
+    if width <= 0 || height <= 0 {
+        return Err("Vùng chụp phải có kích thước dương".into());
+    }
+    let monitors = Monitor::all().map_err(|e| e.to_string())?;
     let monitor = monitors
         .iter()
         .find(|m| {
-            let mx = m.x();
-            let my = m.y();
-            let mw = m.width() as i32;
-            let mh = m.height() as i32;
-            x >= mx && x < mx + mw && y >= my && y < my + mh
+            x >= m.x()
+                && y >= m.y()
+                && (x as i64) < m.x() as i64 + m.width() as i64
+                && (y as i64) < m.y() as i64 + m.height() as i64
         })
-        .unwrap_or(&monitors[0]);
+        .ok_or("Gốc vùng chụp nằm ngoài các màn hình")?;
+    let full = monitor.capture_image().map_err(|e| e.to_string())?;
+    let cx = (x - monitor.x()) as u32;
+    let cy = (y - monitor.y()) as u32;
+    let cw = (width as u32).min(full.width().saturating_sub(cx));
+    let ch = (height as u32).min(full.height().saturating_sub(cy));
+    if cw == 0 || ch == 0 {
+        return Err("Vùng chụp rỗng".into());
+    }
+    Ok(CapturedFrame {
+        image: DynamicImage::ImageRgba8(imageops::crop_imm(&full, cx, cy, cw, ch).to_image()),
+        reference: FrameRef {
+            frame_id: String::new(),
+            width: cw,
+            height: ch,
+            origin_x: x,
+            origin_y: y,
+            monitor_scale: monitor.scale_factor(),
+        },
+    })
+}
 
-    let full_image = monitor.capture_image().map_err(|e| e.to_string())?;
-
-    let mon_w = full_image.width();
-    let mon_h = full_image.height();
-
-    // Toạ độ tương đối so với góc trên-trái của monitor đó
-    let rel_x = x - monitor.x();
-    let rel_y = y - monitor.y();
-
-    let crop_x = (rel_x.max(0) as u32).min(mon_w);
-    let crop_y = (rel_y.max(0) as u32).min(mon_h);
-    let crop_w = (width.max(1) as u32).min(mon_w.saturating_sub(crop_x));
-    let crop_h = (height.max(1) as u32).min(mon_h.saturating_sub(crop_y));
-
-    let cropped = imageops::crop_imm(&full_image, crop_x, crop_y, crop_w, crop_h).to_image();
-    let rgb_image = DynamicImage::ImageRgba8(cropped).into_rgb8();
-    let dyn_image = DynamicImage::ImageRgb8(rgb_image);
-
+pub fn cache_frame(mut frame: CapturedFrame, cache: &FrameCache) -> Result<FrameRef, String> {
     let mut buffer = Cursor::new(Vec::new());
-    dyn_image
+    DynamicImage::ImageRgb8(frame.image.into_rgb8())
         .write_to(&mut buffer, ImageFormat::Jpeg)
         .map_err(|e| e.to_string())?;
+    frame.reference.frame_id = cache.insert(buffer.into_inner());
+    Ok(frame.reference)
+}
 
-    let base64_str = general_purpose::STANDARD.encode(buffer.into_inner());
-    Ok(format!("data:image/jpeg;base64,{}", base64_str))
+#[tauri::command(async)]
+pub fn capture_screen_region(
+    cache: tauri::State<'_, FrameCache>,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<FrameRef, String> {
+    cache_frame(capture(x, y, width, height)?, &cache)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn eviction_preserves_pinned_readers() {
+        let cache = FrameCache::default();
+        let first = cache.insert(vec![42]);
+        let pinned = cache.get(&first).unwrap();
+        for _ in 0..5 {
+            cache.insert(vec![0]);
+        }
+        assert!(cache.get(&first).is_none());
+        assert_eq!(cache.frames.len(), 5);
+        assert_eq!(*pinned, vec![42]);
+    }
 }

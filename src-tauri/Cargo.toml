@@ -1,6 +1,6 @@
 [package]
 name = "orbis-agent"
-version = "0.2.0"
+version = "1.0.0"
 description = "Orbis Agent - The Spatial Desktop Agent"
 edition = "2021"
 
@@ -17,6 +17,14 @@ xcap = "0.3.3"
 base64 = "0.22"
 image = "0.25"
 rand = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util"] }
+tokio-util = "0.7"
+uuid = { version = "1", features = ["v4", "serde"] }
+dashmap = "6"
+tempfile = "3"
+imageproc = "0.25"
+ab_glyph = "0.2"
+rmcp = { version = "0.8", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest", "transport-sse-client-reqwest"] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
@@ -25,6 +33,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 # Win32 thô (idle time, elevation). Cùng repo windows-rs, nhưng binding không đổi theo phiên bản.
 [target.'cfg(windows)'.dependencies]
+uiautomation = "0.25"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",

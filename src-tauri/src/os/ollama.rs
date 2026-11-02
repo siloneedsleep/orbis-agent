@@ -140,7 +140,11 @@ pub async fn ensure_ollama_daemon() -> Result<(), String> {
         .send()
         .await
         .map(|_| ())
-        .map_err(|e| format!("Không thể kết nối tới tiến trình Ollama tại {base} sau khi thử tự khởi động: {e}"))
+        .map_err(|e| {
+            format!(
+                "Không thể kết nối tới tiến trình Ollama tại {base} sau khi thử tự khởi động: {e}"
+            )
+        })
 }
 
 #[tauri::command(async)]
@@ -201,17 +205,25 @@ fn preferred_model(models: &[ModelInfo]) -> Option<&ModelInfo> {
 /// Khớp model được yêu cầu với danh sách model thực tế đang cài trong Ollama.
 /// Nếu tên model không tồn tại trong Ollama (ví dụ bị dính tên model Cloud như "deepseek-chat" hay "llama3"),
 /// tự động chuyển sang model tốt nhất hiện có trong máy.
-async fn resolve_local_model(c: &reqwest::Client, requested: Option<String>) -> Result<String, String> {
+async fn resolve_local_model(
+    c: &reqwest::Client,
+    requested: Option<String>,
+) -> Result<String, String> {
     let all = installed(c).await?;
     if all.is_empty() {
-        return Err("Ollama chưa có model nào. Hãy chạy lệnh: ollama pull qwen2.5-coder:14b".to_string());
+        return Err(
+            "Ollama chưa có model nào. Hãy chạy lệnh: ollama pull qwen2.5-coder:14b".to_string(),
+        );
     }
 
     if let Some(req) = requested {
         let req_trimmed = req.trim();
         if !req_trimmed.is_empty() && !req_trimmed.eq_ignore_ascii_case("auto") {
             // 1. Khớp chính xác hoặc không phân biệt hoa thường
-            if let Some(found) = all.iter().find(|m| m.name.eq_ignore_ascii_case(req_trimmed)) {
+            if let Some(found) = all
+                .iter()
+                .find(|m| m.name.eq_ignore_ascii_case(req_trimmed))
+            {
                 return Ok(found.name.clone());
             }
             // 2. Khớp theo tiền tố (ví dụ "qwen2.5-coder" khớp "qwen2.5-coder:14b")
@@ -259,7 +271,10 @@ async fn send_chat(c: &reqwest::Client, body: &Value) -> Result<Value, String> {
         }
     };
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("Lỗi đọc phản hồi Ollama: {e}"))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Lỗi đọc phản hồi Ollama: {e}"))?;
     let v: Value = serde_json::from_str(&text)
         .map_err(|e| format!("Lỗi giải mã JSON từ Ollama (HTTP {status}): {e} | Raw: {text}"))?;
 
@@ -320,7 +335,11 @@ pub async fn ollama_chat(
         .collect();
 
     let mut used_options = max_power.unwrap_or(true);
-    let initial_ctx = if used_options { DEFAULT_CTX } else { FALLBACK_CTX };
+    let initial_ctx = if used_options {
+        DEFAULT_CTX
+    } else {
+        FALLBACK_CTX
+    };
     let mut body = json!({
         "model": resolved_model,
         "messages": msgs,
@@ -334,7 +353,10 @@ pub async fn ollama_chat(
     let reply = match send_chat(&c, &body).await {
         Ok(v) => v,
         Err(err) => {
-            eprintln!("[orbis] Lượt 1 trên '{}' thất bại ({err}), thử fallback...", resolved_model);
+            eprintln!(
+                "[orbis] Lượt 1 trên '{}' thất bại ({err}), thử fallback...",
+                resolved_model
+            );
 
             // Gỡ bỏ ảnh (nếu có) và hạ num_ctx xuống 2048
             if let Some(arr) = body["messages"].as_array_mut() {
@@ -421,7 +443,10 @@ pub async fn ollama_generate(
     let status = resp.status();
     let v: Value = resp.json().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        return Err(v["error"].as_str().unwrap_or("Lỗi máy chủ Ollama").to_string());
+        return Err(v["error"]
+            .as_str()
+            .unwrap_or("Lỗi máy chủ Ollama")
+            .to_string());
     }
 
     let content = v["response"]
@@ -453,7 +478,9 @@ pub async fn ollama_status() -> Result<OllamaStatus, String> {
     Ok(OllamaStatus {
         models,
         largest,
-        threads: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4),
+        threads: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4),
         ctx_cap: DEFAULT_CTX,
     })
 }
@@ -486,7 +513,9 @@ pub async fn validate_cloud_api_key(
     let provider_lower = provider.trim().to_lowercase();
 
     let req = match provider_lower.as_str() {
-        "gemini" => c.get("https://generativelanguage.googleapis.com/v1beta/models").query(&[("key", clean_key)]),
+        "gemini" => c
+            .get("https://generativelanguage.googleapis.com/v1beta/models")
+            .query(&[("key", clean_key)]),
         "openai" => c
             .get("https://api.openai.com/v1/models")
             .header("Authorization", format!("Bearer {clean_key}")),
@@ -523,17 +552,24 @@ pub async fn validate_cloud_api_key(
             if status == 402 {
                 return Ok(KeyValidationResult {
                     valid: false,
-                    error: Some("Tài khoản API đã hết số dư (HTTP 402 Insufficient Balance).".to_string()),
+                    error: Some(
+                        "Tài khoản API đã hết số dư (HTTP 402 Insufficient Balance).".to_string(),
+                    ),
                 });
             }
             if status == 429 {
                 return Ok(KeyValidationResult {
                     valid: false,
-                    error: Some("Đã chạm ngưỡng giới hạn tần suất (HTTP 429 Rate Limit).".to_string()),
+                    error: Some(
+                        "Đã chạm ngưỡng giới hạn tần suất (HTTP 429 Rate Limit).".to_string(),
+                    ),
                 });
             }
             if let Ok(v) = resp.json::<Value>().await {
-                if let Some(msg) = v["error"]["message"].as_str().or_else(|| v["message"].as_str()) {
+                if let Some(msg) = v["error"]["message"]
+                    .as_str()
+                    .or_else(|| v["message"].as_str())
+                {
                     return Ok(KeyValidationResult {
                         valid: false,
                         error: Some(msg.to_string()),
@@ -668,10 +704,15 @@ pub async fn cloud_llm_chat(
                 return Err("429 Rate Limit: DeepSeek API đã chạm giới hạn tần suất.".to_string());
             }
             if status == 402 {
-                return Err("402 Insufficient Balance: Tài khoản DeepSeek đã hết số dư.".to_string());
+                return Err(
+                    "402 Insufficient Balance: Tài khoản DeepSeek đã hết số dư.".to_string()
+                );
             }
 
-            let v: Value = resp.json().await.map_err(|e| format!("Lỗi đọc JSON từ DeepSeek: {e}"))?;
+            let v: Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("Lỗi đọc JSON từ DeepSeek: {e}"))?;
             if let Some(content) = v["choices"][0]["message"]["content"].as_str() {
                 return Ok(ChatReply {
                     model: resolved_model,
@@ -756,7 +797,10 @@ pub async fn cloud_llm_chat(
                 return Err("429 Rate Limit: Gemini API đã chạm giới hạn tần suất.".to_string());
             }
 
-            let mut v: Value = resp.json().await.map_err(|e| format!("Lỗi đọc JSON từ Gemini: {e}"))?;
+            let mut v: Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("Lỗi đọc JSON từ Gemini: {e}"))?;
             let mut final_model = resolved_model.clone();
 
             // Nếu model tùy chỉnh bị lỗi 404/400, thử tự động fallback sang gemini-2.5-flash hoặc gemini-2.0-flash
@@ -784,7 +828,13 @@ pub async fn cloud_llm_chat(
                     "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
                     final_model
                 );
-                if let Ok(r2) = c.post(&fallback_url).query(&[("key", clean_key)]).json(&fallback_body).send().await {
+                if let Ok(r2) = c
+                    .post(&fallback_url)
+                    .query(&[("key", clean_key)])
+                    .json(&fallback_body)
+                    .send()
+                    .await
+                {
                     if let Ok(v2) = r2.json::<Value>().await {
                         if v2.get("error").is_none() {
                             v = v2;
@@ -855,7 +905,10 @@ pub async fn cloud_llm_chat(
                 return Err("429 Rate Limit: OpenAI API đã chạm giới hạn tần suất.".to_string());
             }
 
-            let v: Value = resp.json().await.map_err(|e| format!("Lỗi đọc JSON từ OpenAI: {e}"))?;
+            let v: Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("Lỗi đọc JSON từ OpenAI: {e}"))?;
             if let Some(err_msg) = v["error"]["message"].as_str() {
                 return Err(format!("OpenAI API Error: {err_msg}"));
             }
@@ -910,7 +963,10 @@ pub async fn cloud_llm_chat(
                 return Err("429 Rate Limit: Claude API đã chạm giới hạn tần suất.".to_string());
             }
 
-            let v: Value = resp.json().await.map_err(|e| format!("Lỗi đọc JSON từ Claude: {e}"))?;
+            let v: Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("Lỗi đọc JSON từ Claude: {e}"))?;
             if let Some(err_msg) = v["error"]["message"].as_str() {
                 return Err(format!("Claude API Error: {err_msg}"));
             }

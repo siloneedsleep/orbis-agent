@@ -53,10 +53,9 @@ pub fn apply_win32_overlay_flags(hwnd: HWND, interactive: bool) {
     }
 }
 
-
 /// Overlay trong suốt, luôn nổi trên cùng, click-through, phủ toàn bộ virtual desktop.
 pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("overlay.html".into()))
+    let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("overlay.html".into()))
         .title("Orbis Overlay")
         .decorations(false)
         .transparent(true)
@@ -65,8 +64,14 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .skip_taskbar(true)
         .resizable(false)
         .focused(false)
-        .visible(false)
-        .build()?;
+        .visible(false);
+    #[cfg(debug_assertions)]
+    let builder = if let Some(directory) = std::env::var_os("ORBIS_DATA_DIR") {
+        builder.data_directory(std::path::PathBuf::from(directory).join("webview"))
+    } else {
+        builder
+    };
+    let window = builder.build()?;
 
     // Cần window đã tồn tại mới hỏi được danh sách monitor.
     let layout = compute_layout(&window)?;
@@ -87,7 +92,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 pub fn compute_layout(window: &WebviewWindow) -> tauri::Result<OverlayLayout> {
     let monitors = window.available_monitors()?;
     if monitors.is_empty() {
-        return Err(tauri::Error::Io(std::io::Error::other("không phát hiện monitor nào")));
+        return Err(tauri::Error::Io(std::io::Error::other(
+            "không phát hiện monitor nào",
+        )));
     }
     let primary = window.primary_monitor()?;
 
@@ -113,9 +120,9 @@ pub fn compute_layout(window: &WebviewWindow) -> tauri::Result<OverlayLayout> {
             width: m.size().width,
             height: m.size().height,
             scale: m.scale_factor(),
-            primary: primary
-                .as_ref()
-                .map_or(false, |p| p.position() == m.position() && p.size() == m.size()),
+            primary: primary.as_ref().map_or(false, |p| {
+                p.position() == m.position() && p.size() == m.size()
+            }),
         })
         .collect();
 

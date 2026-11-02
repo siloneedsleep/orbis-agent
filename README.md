@@ -1,183 +1,42 @@
-# Orbis Agent
+# Orbis Agent 1.0
 
-Tauri v2 + React + Vite + Tailwind + Framer Motion. Ứng dụng chạy trên Windows, có overlay dạng "The Core" và dashboard thị trường / thử nghiệm trạng thái hệ thống.
+Ứng dụng desktop Windows dùng Tauri v2, Rust, React 18 và TypeScript. Engine Rust quản lý tác vụ, lịch sử và cấu hình chung cho Dashboard và Overlay.
 
-## Mục tiêu
+## Chạy và build
 
-- Wake/sleep overlay bằng hotkey toàn cục: `Ctrl + Alt + Space`
-- Tray icon để bật/tắt Core và mở dashboard
-- Overlay window phủ toàn màn hình và có thể ẩn/hiện theo trạng thái
-- The Core có nhiều trạng thái animation và logic bay di chuyển giữa màn hình
-- Dashboard đọc thông tin hệ thống như quyền admin / thời gian idle và điều khiển demo
+Yêu cầu Windows 10/11, Node.js 24+, Rust stable MSVC và WebView2. Cấu hình model Ollama đã cài hoặc API cloud trong Dashboard.
 
-## Yêu cầu
-
-- Windows 10/11
-- Node.js 20+
-- Rust stable + toolchain MSVC
-- WebView2 runtime
-- Tauri dependencies được cài qua `npm install`
-
-## Chạy app
-
-```bash
-npm install
+```powershell
+npm ci
 npm run tauri dev
 ```
 
-- Click trái tray icon: wake / sleep The Core
-- Menu tray: `Open dashboard`
-- Hotkey mặc định: `Ctrl+Alt+Space`
-
-## Cấu trúc repo
-
-```text
-.
-├── README.md
-├── dashboard.html
-├── overlay.html
-├── package.json
-├── src/
-│   ├── core/
-│   │   └── TheCore/
-│   │       ├── TheCore.tsx
-│   │       ├── CoreMover.tsx
-│   │       ├── arcPath.ts
-│   │       └── index.ts
-│   ├── hooks/
-│   │   └── useVoicePulse.ts
-│   ├── ipc/
-│   │   ├── commands.ts
-│   │   └── events.ts
-│   ├── state/
-│   │   ├── coreMachine.ts
-│   │   └── geometry.ts
-│   ├── windows/
-│   │   ├── dashboard/
-│   │   │   ├── DashboardApp.tsx
-│   │   │   └── main.tsx
-│   │   └── overlay/
-│   │       ├── OverlayApp.tsx
-│   │       ├── OnboardingFlow.tsx
-│   │       ├── ChatBar.tsx
-│   │       └── main.tsx
-│   └── vite-env.d.ts
-├── src-tauri/
-│   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   ├── build.rs
-│   ├── capabilities/
-│   ├── icons/
-│   └── src/
-│       ├── lib.rs
-│       ├── main.rs
-│       ├── commands/
-│       │   ├── mod.rs
-│       │   ├── overlay.rs
-│       │   └── system.rs
-│       ├── os/
-│       │   ├── capture.rs
-│       │   ├── elevation.rs
-│       │   ├── idle.rs
-│       │   ├── input.rs
-│       │   ├── mod.rs
-│       │   ├── ollama.rs
-│       │   └── sandbox.rs
-│       └── shell/
-│           ├── dashboard.rs
-│           ├── mod.rs
-│           ├── overlay.rs
-│           └── tray.rs
-├── vite.config.ts
-└── tsconfig.json
+```powershell
+npm test
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
+npm run tauri build
 ```
 
-## Về logic chính
+## Các thay đổi chính
 
-### 1) The Core state machine
-File: `src/state/coreMachine.ts`
+- Ảnh chụp trả về FrameRef; cache Rust giữ tối đa 5 frame. Ảnh và video dùng giao thức orbis thay vì chuỗi Base64 qua JSON IPC. HTTP response vẫn sở hữu buffer riêng.
+- Hit-test native kiểm tra con trỏ mỗi 25 ms; frontend chỉ đăng ký vùng tương tác.
+- UI Automation và nhãn Set-of-Mark hỗ trợ click_element/type_into_element. Kiểm tra lại runtime ID trước khi click.
+- Vòng lặp agent và định tuyến Reflex/DAG chạy trong Rust. Các node phân tích độc lập chạy đồng thời; Operator dùng chung desktop chạy tuần tự.
+- Tauri Channel gửi snapshot và delta cho hai cửa sổ. Cấu hình cũ được nhập từ localStorage một lần; bộ nhớ mới được lưu nguyên tử trong memory-v1.json tại app data.
+- Ollama dùng JSON Schema; cloud dùng structured output/tool calling và kiểm tra kiểu trong Rust. Cloud fallback cần được bật trong Cài đặt.
+- MCP HTTP, SSE và STDIO dùng rmcp. STDIO tách chương trình và mảng arguments, không chạy chuỗi lệnh qua shell.
+- Ctrl+Alt+Space mở thanh lệnh; / chọn kỹ năng, @ chọn MCP. Avatar chuyển giữa CyberCat và Core; có Stealth Mode.
+- Skill Studio nhập/xuất .orbis; kỹ năng nhập vào mặc định tắt. Mã quà tặng nằm trong mục mở rộng của Capsule.
+- Nhấn Escape ba lần hoặc nút Dừng để hủy tác vụ và thao tác nhập native.
 
-- `CoreState`: `spawning`, `idle`, `docked`, `listening`, `thinking`, `executing`, `sonic_flying`, `shielded`, `glitched`, `quarantine`, `time_rewind`, `sleeping`
-- Có reducer `coreReducer` để xử lý:
-  - wake / sleep
-  - chuyển trạng thái `thinking`
-  - bay đến target màn hình
-  - landed / sleep
+## Sandbox và giới hạn
 
-### 2) Overlay + dashboard UI
-File: `src/windows/overlay/OverlayApp.tsx`
+Lệnh Sandbox chạy bằng Windows Sandbox thật; không có phương án thay thế chạy PowerShell trên host. Cần bật Windows Sandbox và ảo hóa. Workspace là thư mục chia sẻ có quyền ghi; checkpoint/rollback chỉ áp dụng cho thư mục này, không phải snapshot/VSS của toàn hệ thống. Tác vụ từ xa đã gửi tới MCP hoặc n8n có thể tiếp tục ở server sau khi hủy phía client.
 
-- Lắng nghe event wake từ backend
-- Tính toán `dock` và `home` theo monitor hiện tại
-- Hiển thị `TheCore` trong overlay
-- Có onboarding flow và chat bar
-- Click vào Core có thể mở chat / interactive mode
+UIA phụ thuộc mức hỗ trợ accessibility của ứng dụng. Các giao diện canvas có thể cần tọa độ fallback. Không có cam kết về độ chính xác hay tốc độ suy luận; cần kiểm thử với model, DPI và màn hình thực tế. Các adapter cloud, MCP và Windows Sandbox cần cấu hình để kiểm chứng end-to-end.
 
-File: `src/windows/dashboard/DashboardApp.tsx`
+Bản debug hỗ trợ biến ORBIS_DATA_DIR để dùng bộ nhớ và WebView profile kiểm thử riêng. Không commit dữ liệu kiểm thử, API key, node_modules, dist hoặc target.
 
-- Hiển thị dashboard trạng thái hệ thống
-- Đọc `get_overlay_layout()` và `get_system_info()`
-- Gửi demo events như `think`, `idle`, `fly`
-
-### 3) Geometry / monitor positioning
-File: `src/state/geometry.ts`
-
-- Chuyển đổi monitor layout sang CSS coordinate
-- Tính vị trí docking / home / target cho The Core
-
-### 4) Rust / Tauri backend
-File: `src-tauri/src/lib.rs`
-
-- Đăng ký hotkey global `Ctrl+Alt+Space`
-- Tạo tray icon và overlay window khi app khởi động
-- Đăng ký các Tauri command:
-  - `get_overlay_layout`
-  - `set_overlay_interactive`
-  - `get_system_info`
-  - `open_dashboard`
-  - `move_mouse_bezier`
-  - `move_mouse_normalized`
-  - `mouse_click`
-  - `send_keystroke`
-  - `setup_panic_hook`
-  - `capture_screen_region`
-
-File: `src-tauri/src/shell/tray.rs`
-
-- Tạo tray icon
-- Menu bao gồm:
-  - `Wake / sleep The Core`
-  - `Open dashboard`
-  - `Quit`
-
-### 5) Windows OS helpers
-File: `src-tauri/src/os/*.rs`
-
-- `idle.rs`: đo thời gian không hoạt động
-- `elevation.rs`: kiểm tra quyền admin
-- `input.rs`: mô phỏng chuột/keyboard
-- `capture.rs`: capture vùng màn hình
-- `ollama.rs`: tích hợp Ollama / model inference
-- `sandbox.rs`: sandbox-related logic
-- `input.rs` cũng có logic `setup_panic_hook` (3x ESC → exit)
-
-## Tính năng đã có trong code hiện tại
-
-- Overlay có thể bật/tắt bằng hotkey và tray
-- Dashboard demo controller
-- The Core animation + flight movement
-- Lấy thông tin monitor / layout
-- Gắn `isAdmin` để đổi màu core (admin = vàng, user = cyan)
-- Idle detection
-- Mouse/keyboard automation trong Windows
-- Capture screen region
-- Onboarding flow và chat UI trong overlay
-
-## Lưu ý
-
-- Repo hiện đang là phiên bản desktop prototype / demo, không phải full agent runtime hoàn chỉnh.
-- Một số module như `ollama`, `capture`, `input`, `sandbox` đã có trong code nhưng cần được tích hợp sâu hơn vào flow thực tế của app.
-
-## Kết luận
-
-Đây là một ứng dụng desktop Windows, tập trung vào "The Core" overlay và dashboard thử nghiệm, với phần frontend React/Tailwind và phần backend Tauri/Rust đang được xây dựng cùng lúc.
+Mã nguồn v0.2.0 ban đầu được sao chép từ E:/Users/truon/OneDrive/Desktop/orbis-agent-main; bản gốc được giữ nguyên.

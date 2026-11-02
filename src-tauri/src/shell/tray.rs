@@ -1,16 +1,24 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter,
+    AppHandle, Emitter, Manager,
 };
 
 use crate::EVENT_WAKE;
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
-    let wake = MenuItem::with_id(app, "wake", "Wake / sleep The Core", true, None::<&str>)?;
+    let wake = MenuItem::with_id(
+        app,
+        "wake",
+        "Thanh lệnh (Ctrl+Alt+Space)",
+        true,
+        None::<&str>,
+    )?;
     let dashboard = MenuItem::with_id(app, "dashboard", "Open dashboard", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&wake, &dashboard, &quit])?;
+    let stealth = MenuItem::with_id(app, "stealth", "Bật/tắt Stealth Mode", true, None::<&str>)?;
+    let stop = MenuItem::with_id(app, "stop", "Dừng tác vụ", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&wake, &dashboard, &stealth, &stop, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("orbis-tray")
         .tooltip("Orbis Agent")
@@ -18,6 +26,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "wake" => {
+                if let Some(window) = app.get_webview_window("overlay") {
+                    let _ = window.set_focus();
+                }
                 let _ = app.emit(EVENT_WAKE, ());
             }
             "dashboard" => {
@@ -26,7 +37,18 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                     let _ = super::dashboard::show(&handle);
                 });
             }
+            "stealth" => {
+                let engine = app.state::<crate::agent::Engine>();
+                let mut cat = engine.config("orbis_cat_settings");
+                if cat.is_object() {
+                    cat["stealthMode"] =
+                        serde_json::json!(!cat["stealthMode"].as_bool().unwrap_or(false));
+                    let _ = engine.put_setting("orbis_cat_settings".into(), Some(cat.to_string()));
+                }
+            }
+            "stop" => app.state::<crate::agent::Engine>().stop(),
             "quit" => {
+                app.state::<crate::agent::Engine>().stop();
                 app.exit(0);
             }
             _ => {}
@@ -38,6 +60,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
+                if let Some(window) = tray.app_handle().get_webview_window("overlay") {
+                    let _ = window.set_focus();
+                }
                 let _ = tray.app_handle().emit(EVENT_WAKE, ());
             }
         });

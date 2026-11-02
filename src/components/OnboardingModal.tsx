@@ -1,3 +1,4 @@
+import { preferences } from '@/state/orbisBridge';
 import React, { useState, useEffect } from 'react';
 import { 
   Cpu, 
@@ -348,7 +349,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ onComplete }) 
                         onClick={() => {
                           setProvider(p);
                           setValidationResult(null);
-                          setApiKey(localStorage.getItem(`orbis_${p}_key`) || '');
+                          setApiKey(preferences.getItem(`orbis_${p}_key`) || '');
                           if (p === 'deepseek') setApiModel('deepseek-chat');
                           if (p === 'gemini') setApiModel('gemini-2.5-flash');
                           if (p === 'openai') setApiModel('gpt-4o');
