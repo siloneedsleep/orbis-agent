@@ -38,5 +38,3 @@ Lệnh Sandbox chạy bằng Windows Sandbox thật; không có phương án tha
 UIA phụ thuộc mức hỗ trợ accessibility của ứng dụng. Các giao diện canvas có thể cần tọa độ fallback. Không có cam kết về độ chính xác hay tốc độ suy luận; cần kiểm thử với model, DPI và màn hình thực tế. Các adapter cloud, MCP và Windows Sandbox cần cấu hình để kiểm chứng end-to-end.
 
 Bản debug hỗ trợ biến ORBIS_DATA_DIR để dùng bộ nhớ và WebView profile kiểm thử riêng. Không commit dữ liệu kiểm thử, API key, node_modules, dist hoặc target.
-
-Mã nguồn v0.2.0 ban đầu được sao chép từ E:/Users/truon/OneDrive/Desktop/orbis-agent-main; bản gốc được giữ nguyên.
